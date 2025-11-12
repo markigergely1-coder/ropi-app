@@ -187,7 +187,7 @@ if submitted:
         name_val = st.session_state.name_select
         answer_val = st.session_state.answer_radio
         past_event_val = st.session_state.past_event_check
-        past_date_val = st.session_state.past_date_select if past_event_val else ""
+        past_date_val = st.session_state.get("past_date_select", "") # .get() biztonságosabb
         plus_count_val = st.session_state.plus_count if answer_val == "Yes" else "0"
         
         submission_timestamp = datetime.now(HUNGARY_TZ).strftime("%Y-%m-%d %H:%M:%S")
@@ -202,7 +202,10 @@ if submitted:
         guests_added_count = 0
         if answer_val == "Yes":
             for i in range(int(plus_count_val)):
-                extra_name = st.session_state.plus_names[i].strip()
+                # Használjuk a key-t a text_input-ból
+                extra_name_key = f"plus_name_txt_{i}"
+                extra_name = st.session_state[extra_name_key].strip() if extra_name_key in st.session_state else ""
+                
                 if extra_name: # Csak ha ki van töltve a név
                     extra_row = [
                         f"{name_val} - {extra_name}", 
@@ -222,10 +225,17 @@ if submitted:
                 success_msg += f" (Plusz {guests_added_count} fő vendég)"
             st.success(success_msg)
             
+            # <<< JAVÍTÁS ITT: Szögletes zárójelet használunk a pont helyett
             # Űrlap alaphelyzetbe állítása mentés után
-            st.session_state.plus_count = "0"
-            st.session_state.plus_names = [""] * 10
-            st.experimental_rerun() # Újratölti az oldalt
+            st.session_state["plus_count"] = "0"
+            
+            # A plus_names törlése (biztonságosabb)
+            for i in range(10):
+                if f"plus_name_txt_{i}" in st.session_state:
+                    st.session_state[f"plus_name_txt_{i}"] = ""
+            
+            # <<< JAVÍTÁS: st.rerun() használata
+            st.rerun() # Újratölti az oldalt
             
         else:
             st.error(f"Mentési hiba: {message}")
