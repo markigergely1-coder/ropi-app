@@ -4,7 +4,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta
 import os
 import json
-import pytz # <<< ÚJ IMPORT az időzónához
+import pytz # <<< SZÜKSÉGES az időzónához
 
 # --- KONFIGURÁCIÓ ---
 CREDENTIALS_FILE = 'credentials.json'
@@ -17,7 +17,7 @@ MAIN_NAME_LIST = [
     "Domokos Kadosa", "Áron Szabó", "Máté Plank", "Lea Plank"
 ]
 PLUS_PEOPLE_COUNT = [str(i) for i in range(11)]
-HUNGARY_TZ = pytz.timezone("Europe/Budapest") # <<< ÚJ: Magyar időzóna
+HUNGARY_TZ = pytz.timezone("Europe/Budapest") # Magyar időzóna
 
 # --- HÁTTÉRLOGIKA (GSPREAD ÉS DÁTUMOK) ---
 
@@ -76,7 +76,6 @@ def get_counter_value(_gsheet):
 def generate_tuesday_dates(past_count=8, future_count=2):
     """Legenerálja a keddi dátumokat egy listába."""
     tuesday_dates_list = []
-    # <<< JAVÍTÁS: Magyar időzóna használata a dátumgeneráláshoz is
     today = datetime.now(HUNGARY_TZ).date()
     days_since_tuesday = (today.weekday() - 1) % 7 
     last_tuesday = today - timedelta(days=days_since_tuesday)
@@ -98,9 +97,9 @@ def save_data_to_gsheet(gsheet, rows_to_add):
         gsheet.append_rows(rows_to_add, value_input_option='USER_ENTERED')
         print(f"GSpread: {len(rows_to_add)} sor hozzáadva.")
         
-        # <<< JAVÍTÁS: Sikeres mentés után frissítsük a számláló gyorsítótárát
+        # Sikeres mentés után frissítsük a gyorsítótárakat
         st.cache_data.clear() # Törli a @st.cache_data-t (a számlálót)
-        st.cache_resource.clear() # Törli a @st.cache_resource-t (a gsheet kapcsolatot, biztos ami biztos)
+        # st.cache_resource.clear() # A kapcsolatot általában nem kell törölni
         
         return True, "Sikeres mentés."
     except Exception as e:
@@ -138,8 +137,12 @@ answer_var = st.radio("Részt veszel az röpin?", ["Yes", "No"], index=0, horizo
 st.markdown("---")
 
 # 2. Dinamikus mezők
+# A key='...' biztosítja, hogy a Streamlit "emlékezzen" a választásra
 past_event_var = st.checkbox("Múltbeli alkalmat regisztrálok", key="past_event_check")
 past_date_var = ""
+
+# AZONNALI MEGJELENÉS: Mivel nincs "form", ez az if blokk
+# azonnal lefut, amint a checkbox állapota megváltozik.
 if past_event_var:
     tuesday_dates = generate_tuesday_dates()
     default_index = len(tuesday_dates) - 3 if len(tuesday_dates) >= 3 else 0
@@ -156,7 +159,6 @@ if answer_var == "Yes":
     plus_count_var = st.selectbox(
         "Hozol plusz embert?", 
         PLUS_PEOPLE_COUNT, 
-        index=PLUS_PEOPLE_COUNT.index(st.session_state.plus_count), # Megtartja az értéket
         key="plus_count" # Ez a kulcs a session state-hez
     )
     
@@ -164,12 +166,13 @@ if answer_var == "Yes":
     if plus_count_int > 0:
         st.markdown(f"**{plus_count_int} vendég neve:**")
         
-        # Előre kitöltjük a névmezőket a session state alapján
+        # AZONNALI MEGJELENÉS: Ez is lefut, amint a selectbox megváltozik
         for i in range(plus_count_int):
+            # A session state-ben tároljuk a beírt neveket
             st.session_state.plus_names[i] = st.text_input(
                 f"{i+1}. ember név:", 
                 value=st.session_state.plus_names[i], # Megtartja a beírt nevet
-                key=f"plus_name_{i}"
+                key=f"plus_name_txt_{i}" # Egyedi kulcs
             )
 
 # 3. Küldés gomb
@@ -180,28 +183,32 @@ if submitted:
     if gsheet is None:
         st.error("Hiba: A Google Sheets kapcsolat nem él. Próbáld frissíteni az oldalt.")
     else:
-        # <<< JAVÍTÁS: Időzóna használata a timestamp-hez
+        # Adatok gyűjtése a session state-ből
+        name_val = st.session_state.name_select
+        answer_val = st.session_state.answer_radio
+        past_event_val = st.session_state.past_event_check
+        past_date_val = st.session_state.past_date_select if past_event_val else ""
+        plus_count_val = st.session_state.plus_count if answer_val == "Yes" else "0"
+        
         submission_timestamp = datetime.now(HUNGARY_TZ).strftime("%Y-%m-%d %H:%M:%S")
-        target_date_str = past_date_var if past_event_var else ""
         
         rows_to_add = []
         
         # Fő felhasználó
-        main_row = [name_var, answer_var, submission_timestamp, target_date_str]
+        main_row = [name_val, answer_val, submission_timestamp, past_date_val]
         rows_to_add.append(main_row)
         
         # Plusz emberek
         guests_added_count = 0
-        if answer_var == "Yes":
-            # A session state-ből olvassuk a neveket
-            for i in range(int(plus_count_var)):
+        if answer_val == "Yes":
+            for i in range(int(plus_count_val)):
                 extra_name = st.session_state.plus_names[i].strip()
                 if extra_name: # Csak ha ki van töltve a név
                     extra_row = [
-                        f"{name_var} - {extra_name}", 
+                        f"{name_val} - {extra_name}", 
                         "Yes", 
                         submission_timestamp, 
-                        target_date_str
+                        past_date_val
                     ]
                     rows_to_add.append(extra_row)
                     guests_added_count += 1
@@ -210,15 +217,15 @@ if submitted:
         success, message = save_data_to_gsheet(gsheet, rows_to_add)
         
         if success:
-            success_msg = f"Köszönjük, {name_var}! A válaszod rögzítve."
+            success_msg = f"Köszönjük, {name_val}! A válaszod rögzítve."
             if guests_added_count > 0:
                 success_msg += f" (Plusz {guests_added_count} fő vendég)"
             st.success(success_msg)
             
-            # <<< JAVÍTÁS: Űrlap alaphelyzetbe állítása mentés után
+            # Űrlap alaphelyzetbe állítása mentés után
             st.session_state.plus_count = "0"
             st.session_state.plus_names = [""] * 10
-            # st.experimental_rerun() # Újratölti az oldalt
+            st.experimental_rerun() # Újratölti az oldalt
             
         else:
             st.error(f"Mentési hiba: {message}")
