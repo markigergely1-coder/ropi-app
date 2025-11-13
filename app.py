@@ -94,13 +94,13 @@ def save_data_to_gsheet(gsheet, rows_to_add):
     try:
         gsheet.append_rows(rows_to_add, value_input_option='USER_ENTERED')
         print(f"GSpread: {len(rows_to_add)} sor hozzáadva.")
-        st.cache_data.clear() # Törli a számláló gyorsítótárát
+        st.cache_data.clear() 
         return True, "Sikeres mentés."
     except Exception as e:
         print(f"GSpread Mentési Hiba: {e}")
         return False, f"Hiba a mentés közben: {e}"
 
-# --- ÚJ: FŐOLDALI ŰRLAP FELDOLGOZÓJA ---
+# --- FŐOLDALI ŰRLAP FELDOLGOZÓJA ---
 def process_main_form_submission():
     """
     A fő "Jelenléti Ív" űrlap elküldésekor hívódik meg.
@@ -143,14 +143,14 @@ def process_main_form_submission():
             st.success(success_msg)
             
             # Űrlap alaphelyzetbe állítása
-            keys_to_reset = ["plus_count", "past_event_check", "past_date_select", "name_select", "answer_radio"]
-            for i in range(10): keys_to_reset.append(f"plus_name_txt_{i}")
-            
-            # Alapértelmezett értékek visszaállítása
             st.session_state["name_select"] = MAIN_NAME_LIST[0]
             st.session_state["answer_radio"] = "Yes"
             st.session_state["past_event_check"] = False
             st.session_state["plus_count"] = "0"
+            if "past_date_select" in st.session_state:
+                tuesday_dates = generate_tuesday_dates()
+                default_index = len(tuesday_dates) - 3 if len(tuesday_dates) >= 3 else 0
+                st.session_state["past_date_select"] = tuesday_dates[default_index]
             for i in range(10):
                 if f"plus_name_txt_{i}" in st.session_state:
                     st.session_state[f"plus_name_txt_{i}"] = ""
@@ -162,7 +162,7 @@ def process_main_form_submission():
         st.error(f"Váratlan hiba a feldolgozás során: {e}")
 
 
-# --- ÚJ: ADMIN OLDALI ŰRLAP FELDOLGOZÓJA ---
+# --- ADMIN OLDALI ŰRLAP FELDOLGOZÓJA ---
 def process_admin_submission(gsheet):
     """
     Az admin "Küldés" gombjának logikája.
@@ -174,10 +174,8 @@ def process_admin_submission(gsheet):
         
         for name, data in st.session_state.admin_attendance.items():
             if data["present"]:
-                # 1. Fő személy hozzáadása
                 rows_to_add.append([name, "Yes", submission_timestamp, target_date_str])
                 
-                # 2. Vendégek hozzáadása
                 guest_count = int(data["guests"])
                 if guest_count > 0:
                     for i in range(guest_count):
@@ -201,8 +199,9 @@ def process_admin_submission(gsheet):
             st.success(f"{len(rows_to_add)} személy sikeresen regisztrálva a {target_date_str} napra!")
             # Alaphelyzetbe állítás
             st.session_state.admin_step = 1
-            st.session_state.admin_attendance = {name: {"present": False, "guests": "0"} for name in MAIN_NAME_LIST}
-            st.session_state.admin_guest_names = {} # Töröljük a vendégneveket
+            # Töröljük a state-et, hogy újraépüljön
+            del st.session_state.admin_attendance
+            
         else:
             st.error(f"Mentési hiba: {message}")
             
@@ -364,7 +363,10 @@ def render_admin_page(gsheet):
             st.warning("Senki nincs kiválasztva. Menj vissza az 1. lépéshez.")
         else:
             st.write("A következő személyek lesznek regisztrálva:")
-            st.dataframe(final_list_for_display, use_container_width=True, header=None)
+            
+            # <<< JAVÍTÁS ITT: st.dataframe helyett st.markdown >>>
+            # A st.dataframe táblázatot vár, nem szöveges listát.
+            st.markdown("\n".join(f"- {item}" for item in final_list_for_display))
 
         # Gombok
         col1, col2 = st.columns(2)
@@ -375,7 +377,7 @@ def render_admin_page(gsheet):
         with col2:
             if st.button("Küldés a Google Sheets-be", type="primary", disabled=(not final_list_for_display)):
                 process_admin_submission(gsheet)
-                st.rerun()
+                # st.rerun() # A process_admin_submission már tartalmazza a reset logikát
 
 # --- FŐ ALKALMAZÁS INDÍTÁSA ---
 
