@@ -10,11 +10,10 @@ import pytz
 CREDENTIALS_FILE = 'credentials.json'
 GSHEET_NAME = 'Attendance'
 MAIN_NAME_LIST = [
-    "András Papp", "Anna Sengler", "Annamária Földváry", "Flóra & Boti", 
+    "Anna Sengler", "Annamária Földváry", "Flóra", "Boti", 
     "Csanád Laczkó", "Csenge Domokos", "Detti Szabó", "Dóri Békási", 
-    "Gergely Márki", "Kilyénfalvi Júlia", "Kristóf Szelényi", "Laura Piski", 
-    "Léna Piski", "Linda Antal", "Máté Lajer", "Nóri Sásdi", "Laci Márki", 
-    "Domokos Kadosa", "Áron Szabó", "Máté Plank", "Lea Plank"
+    "Gergely Márki", "Kilyénfalvi Júlia", "Laura Piski", "Linda Antal", "Máté Lajer", "Nóri Sásdi", "Laci Márki", 
+    "Domokos Kadosa", "Áron Szabó", "Máté Plank", "Lea Plank", "Océane Olivier"
 ]
 PLUS_PEOPLE_COUNT = [str(i) for i in range(11)]
 HUNGARY_TZ = pytz.timezone("Europe/Budapest") 
@@ -413,3 +412,4 @@ if page == "Jelenléti Ív":
     render_main_page(gsheet)
 elif page == "Admin Regisztráció":
     render_admin_page(gsheet)
+
