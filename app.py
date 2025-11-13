@@ -142,7 +142,7 @@ def process_main_form_submission():
                 success_msg += f" (Plusz {guests_added_count} fő vendég)"
             st.success(success_msg)
             
-            # Űrlap alaphelyzetbe állítása
+            # Űrlap alaphelyzetbe állítása (Reset)
             st.session_state["name_select"] = MAIN_NAME_LIST[0]
             st.session_state["answer_radio"] = "Yes"
             st.session_state["past_event_check"] = False
@@ -162,10 +162,22 @@ def process_main_form_submission():
         st.error(f"Váratlan hiba a feldolgozás során: {e}")
 
 
-# --- ADMIN OLDALI ŰRLAP FELDOLGOZÓJA ---
+# --- ADMIN OLDALI FÜGGVÉNYEK ---
+
+def reset_admin_form(set_step=1):
+    """Alaphelyzetbe állítja az admin űrlapot."""
+    st.session_state.admin_step = set_step
+    st.session_state.admin_attendance = {name: {"present": False, "guests": "0"} for name in MAIN_NAME_LIST}
+    st.session_state.admin_guest_data = {} # Töröljük a beírt vendégneveket
+
+def admin_save_guest_name(key):
+    """Callback: Elmenti a beírt vendégnevet a 'admin_guest_data' tárolóba."""
+    st.session_state.admin_guest_data[key] = st.session_state[key]
+
 def process_admin_submission(gsheet):
     """
     Az admin "Küldés" gombjának logikája.
+    Most már a 'admin_guest_data'-ból olvas.
     """
     try:
         target_date_str = st.session_state.admin_date
@@ -174,13 +186,16 @@ def process_admin_submission(gsheet):
         
         for name, data in st.session_state.admin_attendance.items():
             if data["present"]:
+                # 1. Fő személy hozzáadása
                 rows_to_add.append([name, "Yes", submission_timestamp, target_date_str])
                 
+                # 2. Vendégek hozzáadása
                 guest_count = int(data["guests"])
                 if guest_count > 0:
                     for i in range(guest_count):
                         guest_name_key = f"admin_guest_{name}_{i}"
-                        guest_name = st.session_state.get(guest_name_key, "").strip()
+                        # A 'get'-et az 'admin_guest_data'-ból olvassuk!
+                        guest_name = st.session_state.admin_guest_data.get(guest_name_key, "").strip()
                         if guest_name:
                             rows_to_add.append([
                                 f"{name} - {guest_name}", 
@@ -197,11 +212,7 @@ def process_admin_submission(gsheet):
         
         if success:
             st.success(f"{len(rows_to_add)} személy sikeresen regisztrálva a {target_date_str} napra!")
-            # Alaphelyzetbe állítás
-            st.session_state.admin_step = 1
-            # Töröljük a state-et, hogy újraépüljön
-            del st.session_state.admin_attendance
-            
+            reset_admin_form() # Alaphelyzetbe állítás
         else:
             st.error(f"Mentési hiba: {message}")
             
@@ -253,30 +264,30 @@ def render_main_page(gsheet):
 def render_admin_page(gsheet):
     st.title("Admin: Tömeges Regisztráció")
     
-    # --- ÁLLAPOT INICIALIZÁLÁS ---
+    # --- ÁLLAPOT INICIALIZÁLÁS (JAVÍTVA) ---
+    # Ez a blokk csak a legelső alkalommal fut le
     if 'admin_step' not in st.session_state:
-        st.session_state.admin_step = 1
-    if 'admin_date' not in st.session_state:
-        tuesday_dates = generate_tuesday_dates()
-        default_index = len(tuesday_dates) - 3 if len(tuesday_dates) >= 3 else 0
-        st.session_state.admin_date = tuesday_dates[default_index]
-    if 'admin_attendance' not in st.session_state:
-        st.session_state.admin_attendance = {name: {"present": False, "guests": "0"} for name in MAIN_NAME_LIST}
+        reset_admin_form()
     
     # --- 1. LÉPÉS: JELENLÉT KIVÁLASZTÁSA ---
     if st.session_state.admin_step == 1:
         st.header("1. Lépés: Jelenlét és vendégek")
         
-        # Dátumválasztó
+        # Dátumválasztó (A key="admin_date" elmenti a választást a session state-be)
+        tuesday_dates = generate_tuesday_dates()
+        default_index = 0
+        if st.session_state.get("admin_date") in tuesday_dates:
+            default_index = tuesday_dates.index(st.session_state["admin_date"])
+        
         st.selectbox("Válassz dátumot a regisztrációhoz:", 
-                     generate_tuesday_dates(), 
+                     tuesday_dates, 
+                     index=default_index,
                      key="admin_date")
         st.markdown("---")
 
         # Jelenléti lista
         st.write("Jelöld be, kik voltak ott és hány vendéget hoztak:")
         
-        # Get the *current* state
         attendance_data = st.session_state.admin_attendance
         
         # Fejléc
@@ -291,10 +302,8 @@ def render_admin_page(gsheet):
             with col1:
                 st.write(name)
             with col2:
-                # A 'value' a session state-ből jön
                 attendance_data[name]["present"] = st.checkbox("", value=attendance_data[name]["present"], key=f"admin_present_{name}", label_visibility="collapsed")
             with col3:
-                # Az 'index' a session state-ből jön
                 attendance_data[name]["guests"] = st.selectbox("", PLUS_PEOPLE_COUNT, index=PLUS_PEOPLE_COUNT.index(attendance_data[name]["guests"]), key=f"admin_guests_{name}", label_visibility="collapsed")
         
         # Változások mentése a state-be
@@ -307,9 +316,8 @@ def render_admin_page(gsheet):
     # --- 2. LÉPÉS: VENDÉGNEVEK ---
     elif st.session_state.admin_step == 2:
         st.header("2. Lépés: Vendégnevek megadása")
-        st.info(f"Kiválasztott dátum: **{st.session_state.admin_date}**")
+        st.info(f"Kiválasztott dátum: **{st.session_state.admin_date}**") # Most már a helyes dátumot olvassa
         
-        # Kik hoztak vendéget?
         people_with_guests = []
         for name, data in st.session_state.admin_attendance.items():
             if data["present"] and int(data["guests"]) > 0:
@@ -322,7 +330,13 @@ def render_admin_page(gsheet):
         for name, guest_count in people_with_guests:
             st.subheader(name)
             for i in range(guest_count):
-                st.text_input(f"{i+1}. vendég:", key=f"admin_guest_{name}_{i}")
+                guest_key = f"admin_guest_{name}_{i}"
+                st.text_input(
+                    f"{i+1}. vendég:", 
+                    key=guest_key, 
+                    on_change=admin_save_guest_name, # <<< JAVÍTÁS: Callback hívás
+                    args=(guest_key,) # Argumentum átadása a callback-nek
+                )
 
         # Gombok
         col1, col2 = st.columns(2)
@@ -338,22 +352,21 @@ def render_admin_page(gsheet):
     # --- 3. LÉPÉS: MEGERŐSÍTÉS ÉS KÜLDÉS ---
     elif st.session_state.admin_step == 3:
         st.header("3. Lépés: Összesítés és Küldés")
-        st.info(f"Kiválasztott dátum: **{st.session_state.admin_date}**")
+        st.info(f"Kiválasztott dátum: **{st.session_state.admin_date}**") # Helyes dátum
         st.markdown("---")
         
         final_list_for_display = []
         
         for name, data in st.session_state.admin_attendance.items():
             if data["present"]:
-                # 1. Fő személy
                 final_list_for_display.append(f"✅ **{name}**")
                 
-                # 2. Vendégek
                 guest_count = int(data["guests"])
                 if guest_count > 0:
                     for i in range(guest_count):
                         guest_name_key = f"admin_guest_{name}_{i}"
-                        guest_name = st.session_state.get(guest_name_key, "").strip()
+                        # <<< JAVÍTÁS: Olvasás a 'admin_guest_data'-ból
+                        guest_name = st.session_state.admin_guest_data.get(guest_name_key, "").strip()
                         if guest_name:
                             final_list_for_display.append(f"  ➡️ {guest_name} ({name} vendége)")
                         else:
@@ -363,9 +376,6 @@ def render_admin_page(gsheet):
             st.warning("Senki nincs kiválasztva. Menj vissza az 1. lépéshez.")
         else:
             st.write("A következő személyek lesznek regisztrálva:")
-            
-            # <<< JAVÍTÁS ITT: st.dataframe helyett st.markdown >>>
-            # A st.dataframe táblázatot vár, nem szöveges listát.
             st.markdown("\n".join(f"- {item}" for item in final_list_for_display))
 
         # Gombok
@@ -375,9 +385,14 @@ def render_admin_page(gsheet):
                 st.session_state.admin_step = 2
                 st.rerun()
         with col2:
-            if st.button("Küldés a Google Sheets-be", type="primary", disabled=(not final_list_for_display)):
-                process_admin_submission(gsheet)
-                # st.rerun() # A process_admin_submission már tartalmazza a reset logikát
+            # <<< JAVÍTÁS: A gomb most már a callback-et hívja
+            st.button(
+                "Küldés a Google Sheets-be", 
+                type="primary", 
+                disabled=(not final_list_for_display),
+                on_click=process_admin_submission, # A callback hívása
+                args=(gsheet,) # Argumentum átadása a callback-nek
+            )
 
 # --- FŐ ALKALMAZÁS INDÍTÁSA ---
 
@@ -386,6 +401,20 @@ page = st.sidebar.radio("Válassz oldalt:", ["Jelenléti Ív", "Admin Regisztrá
 
 # GSheet Kapcsolat
 gsheet = get_gsheet_connection()
+
+# --- JAVÍTÁS: ÁLLAPOT INICIALIZÁLÁS A FŐ RÉSZBEN ---
+# Ennek itt kell lennie, hogy minden oldal (fő és admin) lássa
+tuesday_dates = generate_tuesday_dates()
+default_date = tuesday_dates[-3] if len(tuesday_dates) >= 3 else tuesday_dates[0]
+
+if 'admin_step' not in st.session_state:
+    st.session_state.admin_step = 1
+if 'admin_date' not in st.session_state:
+    st.session_state.admin_date = default_date
+if 'admin_attendance' not in st.session_state:
+    st.session_state.admin_attendance = {name: {"present": False, "guests": "0"} for name in MAIN_NAME_LIST}
+if 'admin_guest_data' not in st.session_state:
+    st.session_state.admin_guest_data = {}
 
 # Oldalválasztás
 if page == "Jelenléti Ív":
