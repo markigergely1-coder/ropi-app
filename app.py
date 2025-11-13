@@ -167,14 +167,18 @@ def reset_admin_form(set_step=1):
     st.session_state.admin_step = set_step
     
     # <<< JAVÍTÁS: A DÁTUMOT MÁR NEM BÁNTJUK! >>>
-    # Csak a jelenlétet és a vendégadatokat töröljük.
     
     st.session_state.admin_attendance = {name: {"present": False, "guests": "0"} for name in MAIN_NAME_LIST}
-    st.session_state.admin_guest_data = {} # Töröljük a beírt vendégneveket
+    st.session_state.admin_guest_data = {} 
 
 def admin_save_guest_name(key):
     """Callback: Elmenti a beírt vendégnevet a 'admin_guest_data' tárolóba."""
     st.session_state.admin_guest_data[key] = st.session_state.get(key, "")
+
+# <<< ÚJ CALLBACK: Csak a dátum mentésére >>>
+def admin_save_date():
+    """Callback: Elmenti a kiválasztott dátumot a 'admin_date'-be."""
+    st.session_state.admin_date = st.session_state.admin_date_selector
 
 def process_admin_submission(gsheet):
     """
@@ -182,7 +186,6 @@ def process_admin_submission(gsheet):
     Most már a 'admin_guest_data'-ból olvas.
     """
     try:
-        # A dátumot a state-ből olvassuk, ami már nem íródik felül
         target_date_str = st.session_state.admin_date
         submission_timestamp = datetime.now(HUNGARY_TZ).strftime("%Y-%m-%d %H:%M:%S")
         rows_to_add = []
@@ -260,17 +263,20 @@ def render_admin_page(gsheet):
     if st.session_state.admin_step == 1:
         st.header("1. Lépés: Jelenlét és vendégek")
         
-        # Dátumválasztó (A key="admin_date" elmenti a választást a session state-be)
+        # <<< JAVÍTÁS: A DÁTUMVÁLASZTÓ MÁR NEM 'key='-t HASZNÁL >>>
         tuesday_dates = generate_tuesday_dates()
-        # Az indexet a state-ből olvassuk
         default_index = 0
         if st.session_state.admin_date in tuesday_dates:
             default_index = tuesday_dates.index(st.session_state.admin_date)
         
+        # A 'key' itt 'admin_date_selector', és az 'on_change' frissíti
+        # a valódi 'admin_date' állapotot.
         st.selectbox("Válassz dátumot a regisztrációhoz:", 
                      tuesday_dates, 
                      index=default_index,
-                     key="admin_date") # Ez frissíti a 'st.session_state.admin_date'-et
+                     key="admin_date_selector", # Ez egy "ideiglenes" kulcs
+                     on_change=admin_save_date) # Callback, ami menti a választást
+        
         st.markdown("---")
         
         st.write("Jelöld be, kik voltak ott és hány vendéget hoztak:")
@@ -300,7 +306,8 @@ def render_admin_page(gsheet):
     # --- 2. LÉPÉS: VENDÉGNEVEK ---
     elif st.session_state.admin_step == 2:
         st.header("2. Lépés: Vendégnevek megadása")
-        st.info(f"Kiválasztott dátum: **{st.session_state.admin_date}**") # Most már a helyes dátumot olvassa
+        # <<< JAVÍTÁS: A dátumot a 'admin_date'-ből olvassuk, ami már nem íródik felül >>>
+        st.info(f"Kiválasztott dátum: **{st.session_state.admin_date}**") 
         
         people_with_guests = []
         for name, data in st.session_state.admin_attendance.items():
@@ -317,7 +324,7 @@ def render_admin_page(gsheet):
                 st.text_input(
                     f"{i+1}. vendég:", 
                     key=guest_key, 
-                    on_change=admin_save_guest_name, # Callback hívás
+                    on_change=admin_save_guest_name, 
                     args=(guest_key,) 
                 )
 
@@ -334,7 +341,8 @@ def render_admin_page(gsheet):
     # --- 3. LÉPÉS: MEGERŐSÍTÉS ÉS KÜLDÉS ---
     elif st.session_state.admin_step == 3:
         st.header("3. Lépés: Összesítés és Küldés")
-        st.info(f"Kiválasztott dátum: **{st.session_state.admin_date}**") # Helyes dátum
+        # <<< JAVÍTÁS: A dátumot a 'admin_date'-ből olvassuk >>>
+        st.info(f"Kiválasztott dátum: **{st.session_state.admin_date}**") 
         st.markdown("---")
         
         final_list_for_display = []
@@ -375,12 +383,10 @@ def render_admin_page(gsheet):
 
 # --- FŐ ALKALMAZÁS INDÍTÁSA ---
 
-# <<< JAVÍTÁS: INICIALIZÁLÁS A KÓD ELEJÉRE >>>
-# Ez a blokk most már a script legelején lefut, egyszer
+# Alapértelmezett állapotok beállítása (egyszer, a legelején)
 tuesday_dates = generate_tuesday_dates()
 default_date = tuesday_dates[-3] if len(tuesday_dates) >= 3 else (tuesday_dates[0] if tuesday_dates else "Nincs dátum")
 
-# Alapértelmezett állapotok beállítása (ha még nem léteznek)
 if 'admin_step' not in st.session_state:
     st.session_state.admin_step = 1
 if 'admin_date' not in st.session_state:
