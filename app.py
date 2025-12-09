@@ -12,7 +12,7 @@ GSHEET_NAME = 'Attendance'
 MAIN_NAME_LIST = [
     "Anna Sengler", "Annamária Földváry", "Flóra", "Boti", 
     "Csanád Laczkó", "Csenge Domokos", "Detti Szabó", "Dóri Békási", 
-    "Gergely Márki", "Kilyénfalvi Júlia", "Laura Piski", "Linda Antal", "Máté Lajer", "Nóri Sásdi", "Laci Márki", 
+    "Gergely Márki", "Márki Jancsi", "Kilyénfalvi Júlia", "Laura Piski", "Linda Antal", "Máté Lajer", "Nóri Sásdi", "Laci Márki", 
     "Domokos Kadosa", "Áron Szabó", "Máté Plank", "Lea Plank", "Océane Olivier"
 ]
 PLUS_PEOPLE_COUNT = [str(i) for i in range(11)]
@@ -412,4 +412,5 @@ if page == "Jelenléti Ív":
     render_main_page(gsheet)
 elif page == "Admin Regisztráció":
     render_admin_page(gsheet)
+
 
