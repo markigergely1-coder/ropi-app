@@ -15,6 +15,29 @@ MAIN_NAME_LIST = [
     "Gergely Márki", "Márki Jancsi", "Kilyénfalvi Júlia", "Laura Piski", "Linda Antal", "Máté Lajer", "Nóri Sásdi", "Laci Márki", 
     "Domokos Kadosa", "Áron Szabó", "Máté Plank", "Lea Plank", "Océane Olivier"
 ]
+LEGACY_ATTENDANCE_TOTALS = {
+    "András Papp": 7,
+    "Anna Sengler": 25,
+    "Annamária Földváry": 36,
+    "Flóra & Boti": 19,
+    "Csanád Laczkó": 41,
+    "Csenge Domokos": 47,
+    "Detti Szabó": 39,
+    "Dóri Békási": 45,
+    "Gergely Márki": 42,
+    "Kilyénfalvi Júlia": 13,
+    "Kristóf Szelényi": 5,
+    "Laura Piski": 11,
+    "Léna Piski": 13,
+    "Linda Antal": 6,
+    "Máté Lajer": 7,
+    "Nóri Sásdi": 19,
+    "Laci Márki": 28,
+    "Domokos Kadosa": 23,
+    "Áron Szabó": 16,
+    "Máté Plank": 40,
+    "Lea Plank": 15,
+}
 PLUS_PEOPLE_COUNT = [str(i) for i in range(11)]
 HUNGARY_TZ = pytz.timezone("Europe/Budapest") 
 
@@ -150,6 +173,35 @@ def build_monthly_stats(rows):
             counts_by_month[month_key][name] = counts_by_month[month_key].get(name, 0) + 1
 
     return counts_by_month
+
+def build_total_attendance(rows):
+    status_by_name_date = {}
+    for row in rows[1:]:
+        name = row[0].strip() if len(row) > 0 else ""
+        response = row[1].strip() if len(row) > 1 else ""
+        registration_value = row[2].strip() if len(row) > 2 else ""
+        event_value = row[3].strip() if len(row) > 3 else ""
+
+        if not name or response not in {"Yes", "No"}:
+            continue
+
+        record_date = parse_attendance_date(registration_value, event_value)
+        if record_date is None:
+            continue
+
+        key = (name, record_date)
+        status = status_by_name_date.setdefault(key, {"yes": False, "no": False})
+        if response == "Yes":
+            status["yes"] = True
+        else:
+            status["no"] = True
+
+    totals = {}
+    for (name, _), status in status_by_name_date.items():
+        if status["yes"] and not status["no"]:
+            totals[name] = totals.get(name, 0) + 1
+
+    return totals
 
 # --- FŐOLDALI ŰRLAP FELDOLGOZÓJA ---
 def process_main_form_submission():
@@ -461,6 +513,28 @@ def render_stats_page(gsheet):
     ]
     st.dataframe(stats_rows, use_container_width=True)
 
+def render_leaderboard_page(gsheet):
+    st.title("Összesített jelenlét")
+    rows = get_attendance_rows(gsheet)
+    if not rows:
+        st.info("Nincs elérhető adat az Attendance táblában.")
+        return
+
+    totals = build_total_attendance(rows)
+    combined_totals = dict(LEGACY_ATTENDANCE_TOTALS)
+    for name, count in totals.items():
+        combined_totals[name] = combined_totals.get(name, 0) + count
+
+    leaderboard_rows = [
+        {"Név": name, "Összes jelenlét": count}
+        for name, count in sorted(
+            combined_totals.items(),
+            key=lambda item: (-item[1], item[0])
+        )
+    ]
+
+    st.dataframe(leaderboard_rows, use_container_width=True)
+
 # --- FŐ ALKALMAZÁS INDÍTÁSA ---
 
 # Alapértelmezett állapotok beállítása (egyszer, a legelején)
@@ -488,7 +562,7 @@ if 'name_select' not in st.session_state:
 # --- Oldalválasztás ---
 page = st.sidebar.radio(
     "Válassz oldalt:",
-    ["Jelenléti Ív", "Admin Regisztráció", "Statisztika"],
+    ["Jelenléti Ív", "Admin Regisztráció", "Statisztika", "Leaderboard"],
     key="page_select"
 )
 gsheet = get_gsheet_connection()
@@ -499,3 +573,5 @@ elif page == "Admin Regisztráció":
     render_admin_page(gsheet)
 elif page == "Statisztika":
     render_stats_page(gsheet)
+elif page == "Leaderboard":
+    render_leaderboard_page(gsheet)
