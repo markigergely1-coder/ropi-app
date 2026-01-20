@@ -15,6 +15,77 @@ MAIN_NAME_LIST = [
     "Gergely Márki", "Márki Jancsi", "Kilyénfalvi Júlia", "Laura Piski", "Linda Antal", "Máté Lajer", "Nóri Sásdi", "Laci Márki", 
     "Domokos Kadosa", "Áron Szabó", "Máté Plank", "Lea Plank", "Océane Olivier"
 ]
+LEGACY_ATTENDANCE_TOTALS = {
+    "András Papp": 7,
+    "Anna Sengler": 25,
+    "Annamária Földváry": 36,
+    "Flóra & Boti": 19,
+    "Csanád Laczkó": 41,
+    "Csenge Domokos": 47,
+    "Detti Szabó": 39,
+    "Dóri Békási": 45,
+    "Gergely Márki": 42,
+    "Kilyénfalvi Júlia": 3,
+    "Kristóf Szelényi": 5,
+    "Laura Piski": 4,
+    "Léna Piski": 1,
+    "Linda Antal": 3,
+    "Máté Lajer": 2,
+    "Nóri Sásdi": 24,
+    "Laci Márki": 39,
+    "Domokos Kadosa": 30,
+    "Áron Szabó": 24,
+    "Máté Plank": 36,
+    "Lea Plank": 15,
+}
+YEARLY_LEGACY_TOTALS = {
+    2024: {
+        "András Papp": 4,
+        "Anna Sengler": 7,
+        "Annamária Földváry": 6,
+        "Flóra & Boti": 4,
+        "Csanád Laczkó": 8,
+        "Csenge Domokos": 7,
+        "Detti Szabó": 5,
+        "Dóri Békási": 6,
+        "Gergely Márki": 8,
+        "Kilyénfalvi Júlia": 6,
+        "Kristóf Szelényi": 4,
+        "Laura Piski": 6,
+        "Léna Piski": 7,
+        "Linda Antal": 5,
+        "Máté Lajer": 6,
+        "Nóri Sásdi": 0,
+        "Laci Márki": 0,
+        "Domokos Kadosa": 0,
+        "Áron Szabó": 0,
+        "Máté Plank": 7,
+        "Lea Plank": 0,
+    },
+    2025: {
+        "András Papp": 3,
+        "Anna Sengler": 19,
+        "Annamária Földváry": 31,
+        "Flóra & Boti": 15,
+        "Csanád Laczkó": 34,
+        "Csenge Domokos": 41,
+        "Detti Szabó": 35,
+        "Dóri Békási": 39,
+        "Gergely Márki": 35,
+        "Kilyénfalvi Júlia": 7,
+        "Kristóf Szelényi": 1,
+        "Laura Piski": 6,
+        "Léna Piski": 7,
+        "Linda Antal": 1,
+        "Máté Lajer": 1,
+        "Nóri Sásdi": 19,
+        "Laci Márki": 28,
+        "Domokos Kadosa": 23,
+        "Áron Szabó": 16,
+        "Máté Plank": 33,
+        "Lea Plank": 15,
+    },
+}
 PLUS_PEOPLE_COUNT = [str(i) for i in range(11)]
 HUNGARY_TZ = pytz.timezone("Europe/Budapest") 
 
@@ -98,6 +169,89 @@ def save_data_to_gsheet(gsheet, rows_to_add):
     except Exception as e:
         print(f"GSpread Mentési Hiba: {e}")
         return False, f"Hiba a mentés közben: {e}"
+
+@st.cache_data(ttl=300)
+def get_attendance_rows(_gsheet):
+    if _gsheet is None:
+        return []
+    try:
+        print("GSpread: Attendance adatok lekérése...")
+        return _gsheet.get_all_values()
+    except Exception as e:
+        print(f"Hiba a Attendance adatok olvasásakor: {e}")
+        return []
+
+def parse_attendance_date(registration_value, event_value):
+    date_value = event_value or registration_value
+    if not date_value:
+        return None
+    try:
+        return datetime.strptime(date_value.split(" ")[0], "%Y-%m-%d").date()
+    except ValueError:
+        print(f"Hiba a dátum feldolgozásakor: {date_value}")
+        return None
+
+def build_monthly_stats(rows):
+    status_by_name_date = {}
+    for row in rows[1:]:
+        name = row[0].strip() if len(row) > 0 else ""
+        response = row[1].strip() if len(row) > 1 else ""
+        registration_value = row[2].strip() if len(row) > 2 else ""
+        event_value = row[3].strip() if len(row) > 3 else ""
+
+        if not name or response not in {"Yes", "No"}:
+            continue
+
+        record_date = parse_attendance_date(registration_value, event_value)
+        if record_date is None:
+            continue
+
+        key = (name, record_date)
+        status = status_by_name_date.setdefault(key, {"yes": False, "no": False})
+        if response == "Yes":
+            status["yes"] = True
+        else:
+            status["no"] = True
+
+    counts_by_month = {}
+    for (name, record_date), status in status_by_name_date.items():
+        if status["yes"] and not status["no"]:
+            month_key = record_date.strftime("%Y-%m")
+            counts_by_month.setdefault(month_key, {})
+            counts_by_month[month_key][name] = counts_by_month[month_key].get(name, 0) + 1
+
+    return counts_by_month
+
+def build_total_attendance(rows, year=None):
+    status_by_name_date = {}
+    for row in rows[1:]:
+        name = row[0].strip() if len(row) > 0 else ""
+        response = row[1].strip() if len(row) > 1 else ""
+        registration_value = row[2].strip() if len(row) > 2 else ""
+        event_value = row[3].strip() if len(row) > 3 else ""
+
+        if not name or response not in {"Yes", "No"}:
+            continue
+
+        record_date = parse_attendance_date(registration_value, event_value)
+        if record_date is None:
+            continue
+        if year is not None and record_date.year != year:
+            continue
+
+        key = (name, record_date)
+        status = status_by_name_date.setdefault(key, {"yes": False, "no": False})
+        if response == "Yes":
+            status["yes"] = True
+        else:
+            status["no"] = True
+
+    totals = {}
+    for (name, _), status in status_by_name_date.items():
+        if status["yes"] and not status["no"]:
+            totals[name] = totals.get(name, 0) + 1
+
+    return totals
 
 # --- FŐOLDALI ŰRLAP FELDOLGOZÓJA ---
 def process_main_form_submission():
@@ -380,6 +534,66 @@ def render_admin_page(gsheet):
                 args=(gsheet,) 
             )
 
+def render_stats_page(gsheet):
+    st.title("Statisztika: Havi részvétel")
+    rows = get_attendance_rows(gsheet)
+    if not rows:
+        st.info("Nincs elérhető adat az Attendance táblában.")
+        return
+
+    monthly_counts = build_monthly_stats(rows)
+    if not monthly_counts:
+        st.info("Nincs feldolgozható statisztikai adat.")
+        return
+
+    months = sorted(monthly_counts.keys(), reverse=True)
+    selected_month = st.selectbox("Válassz hónapot:", months)
+    month_data = monthly_counts.get(selected_month, {})
+
+    if not month_data:
+        st.info("Ebben a hónapban nincs rögzített jelenlét.")
+        return
+
+    stats_rows = [
+        {"Név": name, "Alkalmak száma": count}
+        for name, count in sorted(
+            month_data.items(),
+            key=lambda item: (-item[1], item[0])
+        )
+    ]
+    st.dataframe(stats_rows, use_container_width=True)
+
+def render_leaderboard_page(gsheet):
+    st.title("Összesített jelenlét")
+    rows = get_attendance_rows(gsheet)
+    if not rows:
+        st.info("Nincs elérhető adat az Attendance táblában.")
+        return
+
+    view_options = ["All time", "2024", "2025", "2026"]
+    selected_view = st.selectbox("Válassz nézetet:", view_options)
+    if selected_view == "All time":
+        totals = build_total_attendance(rows)
+        combined_totals = dict(LEGACY_ATTENDANCE_TOTALS)
+    else:
+        selected_year = int(selected_view)
+        totals = build_total_attendance(rows, year=selected_year)
+        combined_totals = dict(YEARLY_LEGACY_TOTALS.get(selected_year, {}))
+
+    for name, count in totals.items():
+        combined_totals[name] = combined_totals.get(name, 0) + count
+
+    sorted_totals = sorted(
+        combined_totals.items(),
+        key=lambda item: (-item[1], item[0])
+    )
+    leaderboard_rows = [
+        {"#": index, "Név": name, "Összes jelenlét": count}
+        for index, (name, count) in enumerate(sorted_totals, start=1)
+    ]
+
+    st.dataframe(leaderboard_rows, use_container_width=True)
+
 # --- FŐ ALKALMAZÁS INDÍTÁSA ---
 
 # Alapértelmezett állapotok beállítása (egyszer, a legelején)
@@ -405,12 +619,20 @@ if 'name_select' not in st.session_state:
 
 
 # --- Oldalválasztás ---
-page = st.sidebar.radio("Válassz oldalt:", ["Jelenléti Ív", "Admin Regisztráció"], key="page_select")
+page = st.sidebar.radio(
+    "Válassz oldalt:",
+    ["Jelenléti Ív", "Admin Regisztráció", "Statisztika", "Leaderboard"],
+    key="page_select"
+)
 gsheet = get_gsheet_connection()
 
 if page == "Jelenléti Ív":
     render_main_page(gsheet)
 elif page == "Admin Regisztráció":
     render_admin_page(gsheet)
+elif page == "Statisztika":
+    render_stats_page(gsheet)
+elif page == "Leaderboard":
+    render_leaderboard_page(gsheet)
 
 
