@@ -18,7 +18,7 @@ MAIN_NAME_LIST = [
 LEGACY_ATTENDANCE_TOTALS = {
     "András Papp": 7,
     "Anna Sengler": 25,
-    "Annamária Földváry": 36,
+    "Annamária Földváry": 336,
     "Flóra & Boti": 19,
     "Csanád Laczkó": 41,
     "Csenge Domokos": 47,
@@ -634,4 +634,5 @@ elif page == "Statisztika":
     render_stats_page(gsheet)
 elif page == "Leaderboard":
     render_leaderboard_page(gsheet)
+
 
