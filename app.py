@@ -24,7 +24,7 @@ LEGACY_ATTENDANCE_TOTALS = {
     "Csenge Domokos": 47,
     "Detti Szabó": 39,
     "Dóri Békási": 45,
-    "Gergely Márki": 42,
+    "Gergely Márki": 342,
     "Kilyénfalvi Júlia": 3,
     "Kristóf Szelényi": 5,
     "Laura Piski": 4,
@@ -634,3 +634,4 @@ elif page == "Statisztika":
     render_stats_page(gsheet)
 elif page == "Leaderboard":
     render_leaderboard_page(gsheet)
+
