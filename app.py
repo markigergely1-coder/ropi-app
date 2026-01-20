@@ -99,6 +99,58 @@ def save_data_to_gsheet(gsheet, rows_to_add):
         print(f"GSpread Mentési Hiba: {e}")
         return False, f"Hiba a mentés közben: {e}"
 
+@st.cache_data(ttl=300)
+def get_attendance_rows(_gsheet):
+    if _gsheet is None:
+        return []
+    try:
+        print("GSpread: Attendance adatok lekérése...")
+        return _gsheet.get_all_values()
+    except Exception as e:
+        print(f"Hiba a Attendance adatok olvasásakor: {e}")
+        return []
+
+def parse_attendance_date(registration_value, event_value):
+    date_value = event_value or registration_value
+    if not date_value:
+        return None
+    try:
+        return datetime.strptime(date_value.split(" ")[0], "%Y-%m-%d").date()
+    except ValueError:
+        print(f"Hiba a dátum feldolgozásakor: {date_value}")
+        return None
+
+def build_monthly_stats(rows):
+    status_by_name_date = {}
+    for row in rows[1:]:
+        name = row[0].strip() if len(row) > 0 else ""
+        response = row[1].strip() if len(row) > 1 else ""
+        registration_value = row[2].strip() if len(row) > 2 else ""
+        event_value = row[3].strip() if len(row) > 3 else ""
+
+        if not name or response not in {"Yes", "No"}:
+            continue
+
+        record_date = parse_attendance_date(registration_value, event_value)
+        if record_date is None:
+            continue
+
+        key = (name, record_date)
+        status = status_by_name_date.setdefault(key, {"yes": False, "no": False})
+        if response == "Yes":
+            status["yes"] = True
+        else:
+            status["no"] = True
+
+    counts_by_month = {}
+    for (name, record_date), status in status_by_name_date.items():
+        if status["yes"] and not status["no"]:
+            month_key = record_date.strftime("%Y-%m")
+            counts_by_month.setdefault(month_key, {})
+            counts_by_month[month_key][name] = counts_by_month[month_key].get(name, 0) + 1
+
+    return counts_by_month
+
 # --- FŐOLDALI ŰRLAP FELDOLGOZÓJA ---
 def process_main_form_submission():
     # ... (nincs változás, hagyd úgy, ahogy van) ...
@@ -380,6 +432,35 @@ def render_admin_page(gsheet):
                 args=(gsheet,) 
             )
 
+def render_stats_page(gsheet):
+    st.title("Statisztika: Havi részvétel")
+    rows = get_attendance_rows(gsheet)
+    if not rows:
+        st.info("Nincs elérhető adat az Attendance táblában.")
+        return
+
+    monthly_counts = build_monthly_stats(rows)
+    if not monthly_counts:
+        st.info("Nincs feldolgozható statisztikai adat.")
+        return
+
+    months = sorted(monthly_counts.keys(), reverse=True)
+    selected_month = st.selectbox("Válassz hónapot:", months)
+    month_data = monthly_counts.get(selected_month, {})
+
+    if not month_data:
+        st.info("Ebben a hónapban nincs rögzített jelenlét.")
+        return
+
+    stats_rows = [
+        {"Név": name, "Alkalmak száma": count}
+        for name, count in sorted(
+            month_data.items(),
+            key=lambda item: (-item[1], item[0])
+        )
+    ]
+    st.dataframe(stats_rows, use_container_width=True)
+
 # --- FŐ ALKALMAZÁS INDÍTÁSA ---
 
 # Alapértelmezett állapotok beállítása (egyszer, a legelején)
@@ -405,12 +486,16 @@ if 'name_select' not in st.session_state:
 
 
 # --- Oldalválasztás ---
-page = st.sidebar.radio("Válassz oldalt:", ["Jelenléti Ív", "Admin Regisztráció"], key="page_select")
+page = st.sidebar.radio(
+    "Válassz oldalt:",
+    ["Jelenléti Ív", "Admin Regisztráció", "Statisztika"],
+    key="page_select"
+)
 gsheet = get_gsheet_connection()
 
 if page == "Jelenléti Ív":
     render_main_page(gsheet)
 elif page == "Admin Regisztráció":
     render_admin_page(gsheet)
-
-
+elif page == "Statisztika":
+    render_stats_page(gsheet)
