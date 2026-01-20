@@ -38,6 +38,54 @@ LEGACY_ATTENDANCE_TOTALS = {
     "Máté Plank": 36,
     "Lea Plank": 15,
 }
+YEARLY_LEGACY_TOTALS = {
+    2024: {
+        "András Papp": 4,
+        "Anna Sengler": 7,
+        "Annamária Földváry": 6,
+        "Flóra & Boti": 4,
+        "Csanád Laczkó": 8,
+        "Csenge Domokos": 7,
+        "Detti Szabó": 5,
+        "Dóri Békási": 6,
+        "Gergely Márki": 8,
+        "Kilyénfalvi Júlia": 6,
+        "Kristóf Szelényi": 4,
+        "Laura Piski": 6,
+        "Léna Piski": 7,
+        "Linda Antal": 5,
+        "Máté Lajer": 6,
+        "Nóri Sásdi": 0,
+        "Laci Márki": 0,
+        "Domokos Kadosa": 0,
+        "Áron Szabó": 0,
+        "Máté Plank": 7,
+        "Lea Plank": 0,
+    },
+    2025: {
+        "András Papp": 3,
+        "Anna Sengler": 19,
+        "Annamária Földváry": 31,
+        "Flóra & Boti": 15,
+        "Csanád Laczkó": 34,
+        "Csenge Domokos": 41,
+        "Detti Szabó": 35,
+        "Dóri Békási": 39,
+        "Gergely Márki": 35,
+        "Kilyénfalvi Júlia": 7,
+        "Kristóf Szelényi": 1,
+        "Laura Piski": 6,
+        "Léna Piski": 7,
+        "Linda Antal": 1,
+        "Máté Lajer": 1,
+        "Nóri Sásdi": 19,
+        "Laci Márki": 28,
+        "Domokos Kadosa": 23,
+        "Áron Szabó": 16,
+        "Máté Plank": 33,
+        "Lea Plank": 15,
+    },
+}
 PLUS_PEOPLE_COUNT = [str(i) for i in range(11)]
 HUNGARY_TZ = pytz.timezone("Europe/Budapest") 
 
@@ -174,7 +222,7 @@ def build_monthly_stats(rows):
 
     return counts_by_month
 
-def build_total_attendance(rows):
+def build_total_attendance(rows, year=None):
     status_by_name_date = {}
     for row in rows[1:]:
         name = row[0].strip() if len(row) > 0 else ""
@@ -187,6 +235,8 @@ def build_total_attendance(rows):
 
         record_date = parse_attendance_date(registration_value, event_value)
         if record_date is None:
+            continue
+        if year is not None and record_date.year != year:
             continue
 
         key = (name, record_date)
@@ -520,8 +570,16 @@ def render_leaderboard_page(gsheet):
         st.info("Nincs elérhető adat az Attendance táblában.")
         return
 
-    totals = build_total_attendance(rows)
-    combined_totals = dict(LEGACY_ATTENDANCE_TOTALS)
+    view_options = ["All time", "2024", "2025", "2026"]
+    selected_view = st.selectbox("Válassz nézetet:", view_options)
+    if selected_view == "All time":
+        totals = build_total_attendance(rows)
+        combined_totals = dict(LEGACY_ATTENDANCE_TOTALS)
+    else:
+        selected_year = int(selected_view)
+        totals = build_total_attendance(rows, year=selected_year)
+        combined_totals = dict(YEARLY_LEGACY_TOTALS.get(selected_year, {}))
+
     for name, count in totals.items():
         combined_totals[name] = combined_totals.get(name, 0) + count
 
