@@ -25,17 +25,17 @@ LEGACY_ATTENDANCE_TOTALS = {
     "Detti Szabó": 39,
     "Dóri Békási": 45,
     "Gergely Márki": 42,
-    "Kilyénfalvi Júlia": 13,
+    "Kilyénfalvi Júlia": 3,
     "Kristóf Szelényi": 5,
-    "Laura Piski": 11,
-    "Léna Piski": 13,
-    "Linda Antal": 6,
-    "Máté Lajer": 7,
-    "Nóri Sásdi": 19,
-    "Laci Márki": 28,
-    "Domokos Kadosa": 23,
-    "Áron Szabó": 16,
-    "Máté Plank": 40,
+    "Laura Piski": 4,
+    "Léna Piski": 1,
+    "Linda Antal": 3,
+    "Máté Lajer": 2,
+    "Nóri Sásdi": 24,
+    "Laci Márki": 39,
+    "Domokos Kadosa": 30,
+    "Áron Szabó": 24,
+    "Máté Plank": 36,
     "Lea Plank": 15,
 }
 PLUS_PEOPLE_COUNT = [str(i) for i in range(11)]
@@ -525,12 +525,13 @@ def render_leaderboard_page(gsheet):
     for name, count in totals.items():
         combined_totals[name] = combined_totals.get(name, 0) + count
 
+    sorted_totals = sorted(
+        combined_totals.items(),
+        key=lambda item: (-item[1], item[0])
+    )
     leaderboard_rows = [
-        {"Név": name, "Összes jelenlét": count}
-        for name, count in sorted(
-            combined_totals.items(),
-            key=lambda item: (-item[1], item[0])
-        )
+        {"#": index, "Név": name, "Összes jelenlét": count}
+        for index, (name, count) in enumerate(sorted_totals, start=1)
     ]
 
     st.dataframe(leaderboard_rows, use_container_width=True)
