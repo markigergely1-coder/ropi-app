@@ -92,40 +92,49 @@ HUNGARY_TZ = pytz.timezone("Europe/Budapest")
 # --- HÁTTÉRLOGIKA (VÁLTOZATLAN) ---
 
 @st.cache_resource(ttl=3600)
+@st.cache_resource(ttl=3600)
 def get_gsheet_connection():
-    # ... (nincs változás, hagyd úgy, ahogy van) ...
-    print("GSpread: Új kapcsolat létrehozása...")
+    """Kapcsolódás a Google Sheets-hez, hibatűrő módon (javítja az Invalid Key hibát)."""
     
-    if hasattr(st, 'secrets'):
+    # 1. Próbálkozás: Streamlit Secrets
+    if hasattr(st, 'secrets') and "google_creds" in st.secrets:
         try:
-            creds_json = {
-                "type": st.secrets["google_creds"]["type"],
-                "project_id": st.secrets["google_creds"]["project_id"],
-                "private_key_id": st.secrets["google_creds"]["private_key_id"],
-                "private_key": st.secrets["google_creds"]["private_key"].replace('\\n', '\n'),
-                "client_email": st.secrets["google_creds"]["client_email"],
-                "client_id": st.secrets["google_creds"]["client_id"],
-                "auth_uri": st.secrets["google_creds"]["auth_uri"],
-                "token_uri": st.secrets["google_creds"]["token_uri"],
-                "auth_provider_x509_cert_url": st.secrets["google_creds"]["auth_provider_x509_cert_url"],
-                "client_x509_cert_url": st.secrets["google_creds"]["client_x509_cert_url"]
-            }
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json)
-        except Exception as e:
-            st.error(f"Hiba a Streamlit titkos kulcsok olvasásakor: {e}")
-            return None
-    else:
-        if not os.path.exists(CREDENTIALS_FILE):
-            st.error(f"Hiba: '{CREDENTIALS_FILE}' nem található.")
-            return None
-        creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE)
+            # Másolat készítése
+            creds_dict = dict(st.secrets["google_creds"])
+            
+            # --- KULCS JAVÍTÁSA (EZ OLDJA MEG A HIBÁT) ---
+            if "private_key" in creds_dict:
+                pk = creds_dict["private_key"]
+                # Idézőjelek és felesleges szóközök levágása
+                pk = pk.strip().strip('"').strip("'")
+                # Ha a sortörés csak szövegként (\n) van benne, cseréljük igazi Enterre
+                if "\\n" in pk:
+                    pk = pk.replace("\\n", "\n")
+                creds_dict["private_key"] = pk
 
-    try:
-        client = gspread.authorize(creds)
-        spreadsheet = client.open(GSHEET_NAME)
-        return spreadsheet.sheet1
-    except Exception as e:
-        st.error(f"Google Sheets csatlakozási hiba: {e}")
+            # Jogosultságok beállítása
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+            client = gspread.authorize(creds)
+            return client
+
+        except Exception as e:
+            st.error(f"Hiba a Secrets beolvasásakor: {repr(e)}")
+            return None
+
+    # 2. Próbálkozás: Helyi fájl (ha van)
+    elif os.path.exists('credentials.json'):
+        try:
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
+            return gspread.authorize(creds)
+        except Exception as e:
+            st.error(f"Hiba a helyi fájl olvasásakor: {e}")
+            return None
+            
+    else:
+        st.error("Nem találhatók a hitelesítési adatok.")
         return None
 
 @st.cache_data(ttl=300)
@@ -634,6 +643,7 @@ elif page == "Statisztika":
     render_stats_page(gsheet)
 elif page == "Leaderboard":
     render_leaderboard_page(gsheet)
+
 
 
 
