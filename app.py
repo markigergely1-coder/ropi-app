@@ -92,51 +92,51 @@ HUNGARY_TZ = pytz.timezone("Europe/Budapest")
 # --- HÁTTÉRLOGIKA (VÁLTOZATLAN) ---
 
 @st.cache_resource(ttl=3600)
-@st.cache_resource(ttl=3600)
 def get_gsheet_connection():
-    """Kapcsolódás a Google Sheets-hez, hibatűrő módon (javítja az Invalid Key hibát)."""
+    """Kapcsolódás a Google Sheets-hez a teljes JSON tartalom alapján (Golyóálló módszer)."""
     
-    # 1. Próbálkozás: Streamlit Secrets
-    if hasattr(st, 'secrets') and "google_creds" in st.secrets:
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+
+    # 1. Próbálkozás: Streamlit Secrets (ÚJ JSON MÓDSZER)
+    if hasattr(st, 'secrets'):
+        # Megnézzük, van-e 'gcp' szekció és benne 'json_content'
+        if "gcp" in st.secrets and "json_content" in st.secrets["gcp"]:
+            try:
+                # A teljes JSON szöveget olvassuk be, így a Python kezeli a sortöréseket
+                json_str = st.secrets["gcp"]["json_content"]
+                creds_dict = json.loads(json_str)
+                
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+                return gspread.authorize(creds)
+            except Exception as e:
+                st.error(f"Hiba a JSON Secrets feldolgozásakor: {e}")
+                return None
+
+        # Régi módszer (fallback), ha a fenti nincs beállítva
+        elif "google_creds" in st.secrets:
+            try:
+                creds_dict = dict(st.secrets["google_creds"])
+                if "private_key" in creds_dict:
+                    pk = creds_dict["private_key"].strip().strip('"').strip("'")
+                    if "\\n" in pk: pk = pk.replace("\\n", "\n")
+                    creds_dict["private_key"] = pk
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+                return gspread.authorize(creds)
+            except Exception as e:
+                st.error(f"Hiba a régi Secrets beolvasásakor: {e}")
+                return None
+
+    # 2. Próbálkozás: Helyi fájl (fejlesztéshez)
+    if os.path.exists('credentials.json'):
         try:
-            # Másolat készítése
-            creds_dict = dict(st.secrets["google_creds"])
-            
-            # --- KULCS JAVÍTÁSA (EZ OLDJA MEG A HIBÁT) ---
-            if "private_key" in creds_dict:
-                pk = creds_dict["private_key"]
-                # Idézőjelek és felesleges szóközök levágása
-                pk = pk.strip().strip('"').strip("'")
-                # Ha a sortörés csak szövegként (\n) van benne, cseréljük igazi Enterre
-                if "\\n" in pk:
-                    pk = pk.replace("\\n", "\n")
-                creds_dict["private_key"] = pk
-
-            # Jogosultságok beállítása
-            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-            client = gspread.authorize(creds)
-            return client
-
-        except Exception as e:
-            st.error(f"Hiba a Secrets beolvasásakor: {repr(e)}")
-            return None
-
-    # 2. Próbálkozás: Helyi fájl (ha van)
-    elif os.path.exists('credentials.json'):
-        try:
-            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
             creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
             return gspread.authorize(creds)
         except Exception as e:
             st.error(f"Hiba a helyi fájl olvasásakor: {e}")
             return None
             
-    else:
-        st.error("Nem találhatók a hitelesítési adatok.")
-        return None
-
+    st.error("Nem találhatók a hitelesítési adatok (sem Secrets, sem json fájl).")
+    return None
 @st.cache_data(ttl=300)
 def get_counter_value(_gsheet):
     # ... (nincs változás, hagyd úgy, ahogy van) ...
@@ -643,6 +643,7 @@ elif page == "Statisztika":
     render_stats_page(gsheet)
 elif page == "Leaderboard":
     render_leaderboard_page(gsheet)
+
 
 
 
