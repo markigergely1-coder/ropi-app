@@ -5,6 +5,43 @@ from datetime import datetime, timedelta
 import os
 import json
 import pytz 
+import pandas as pd
+import time
+
+# --- 1. CONFIG & DESIGN ---
+st.set_page_config(page_title="Röpi App Pro", layout="wide", page_icon="🏐")
+
+def add_visual_styling():
+    st.markdown(
+        """
+        <style>
+        .stApp, p, h1, h2, h3, h4, label, div, span, input {
+            color: #1E1E1E !important; 
+        }
+        .stApp {
+            background-color: #f8f9fa;
+        }
+        div[data-testid="stMetric"] {
+            background-color: #ffffff;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        div.stButton > button {
+            background-color: #2c3e50;
+            color: white !important;
+            border-radius: 8px;
+            border: none;
+            width: 100%;
+        }
+        div.stButton > button:hover {
+            background-color: #34495e;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
 # --- KONFIGURÁCIÓ ---
 CREDENTIALS_FILE = 'credentials.json'
@@ -17,6 +54,7 @@ MAIN_NAME_LIST = [
     "Gergely Márki", "Márki Jancsi", "Kilyénfalvi Júlia", "Laura Piski", "Linda Antal", "Máté Lajer", "Nóri Sásdi", "Laci Márki", 
     "Domokos Kadosa", "Áron Szabó", "Máté Plank", "Lea Plank", "Océane Olivier"
 ]
+MAIN_NAME_LIST.sort()
 
 LEGACY_ATTENDANCE_TOTALS = {
     "András Papp": 7, "Anna Sengler": 25, "Annamária Földváry": 36,
@@ -47,28 +85,23 @@ YEARLY_LEGACY_TOTALS = {
 
 PLUS_PEOPLE_COUNT = [str(i) for i in range(11)]
 
-# --- CSATLAKOZÁS (GOLYÓÁLLÓ VERZIÓ) ---
+# --- SESSION STATE INICIALIZÁLÁS ---
+if 'session_submissions' not in st.session_state:
+    st.session_state.session_submissions = []
+
+# --- CSATLAKOZÁS ---
 
 @st.cache_resource(ttl=3600)
 def get_gsheet_connection():
-    """Kapcsolódás a Google Sheets-hez a teljes JSON tartalom alapján."""
-    
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
-    # 1. Próbálkozás: Streamlit Secrets (ÚJ JSON MÓDSZER)
     if hasattr(st, 'secrets'):
-        # A) Preferált: [gcp] json_content
         if "gcp" in st.secrets and "json_content" in st.secrets["gcp"]:
             try:
-                json_str = st.secrets["gcp"]["json_content"]
-                creds_dict = json.loads(json_str)
+                creds_dict = json.loads(st.secrets["gcp"]["json_content"])
                 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
                 return gspread.authorize(creds)
             except Exception as e:
                 st.error(f"Hiba a JSON Secrets feldolgozásakor: {e}")
-                # Nem térünk vissza, próbáljuk tovább...
-
-        # B) Fallback: [google_creds] private_key (Régi módszer)
         if "google_creds" in st.secrets:
             try:
                 creds_dict = dict(st.secrets["google_creds"])
@@ -80,27 +113,21 @@ def get_gsheet_connection():
                 return gspread.authorize(creds)
             except Exception as e:
                 st.error(f"Hiba a régi Secrets beolvasásakor: {e}")
-                return None
-
-    # 2. Próbálkozás: Helyi fájl (fejlesztéshez)
     if os.path.exists(CREDENTIALS_FILE):
         try:
             creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
             return gspread.authorize(creds)
         except Exception as e:
             st.error(f"Hiba a helyi fájl olvasásakor: {e}")
-            return None
-            
-    st.error("Nem találhatók a hitelesítési adatok (sem Secrets, sem json fájl).")
     return None
 
 # --- SEGÉDFÜGGVÉNYEK ---
 
 @st.cache_data(ttl=300)
-def get_counter_value(_gsheet):
-    if _gsheet is None: return "N/A"
+def get_counter_value(_client):
+    if _client is None: return "N/A"
     try:
-        sheet = _gsheet.open(GSHEET_NAME).sheet1
+        sheet = _client.open(GSHEET_NAME).sheet1
         return sheet.cell(2, 5).value 
     except: return "Hiba"
 
@@ -119,7 +146,6 @@ def save_data_to_gsheet(client, rows_to_add, sheet_name="Attendance"):
     if client is None: return False, "Nincs kapcsolat."
     try:
         ss = client.open(GSHEET_NAME)
-        # Ha nem Attendance a sheet neve, próbáljuk megnyitni név szerint, egyébként sheet1
         if sheet_name == "Attendance":
             sheet = ss.sheet1
         else:
@@ -127,6 +153,11 @@ def save_data_to_gsheet(client, rows_to_add, sheet_name="Attendance"):
             except: sheet = ss.add_worksheet(title=sheet_name, rows=100, cols=20)
         
         sheet.append_rows(rows_to_add, value_input_option='USER_ENTERED')
+        
+        # Friss adatok listájához hozzáadás
+        for r in rows_to_add:
+            st.session_state.session_submissions.insert(0, r)
+            
         st.cache_data.clear() 
         return True, "Sikeres mentés."
     except Exception as e:
@@ -137,6 +168,18 @@ def get_attendance_rows(_client):
     if _client is None: return []
     try: return _client.open(GSHEET_NAME).sheet1.get_all_values()
     except: return []
+
+def get_historical_guests_list(rows, main_name):
+    """Kikeresi a táblázatból a névhez tartozó korábbi vendégeket."""
+    if not rows: return []
+    prefix = f"{main_name} - "
+    guests = set()
+    for row in rows[1:]:
+        if row and row[0].startswith(prefix):
+            guest_part = row[0].replace(prefix, "", 1).strip()
+            if guest_part:
+                guests.add(guest_part)
+    return sorted(list(guests))
 
 def parse_attendance_date(registration_value, event_value):
     date_value = event_value or registration_value
@@ -151,16 +194,13 @@ def build_monthly_stats(rows):
         response = row[1].strip() if len(row) > 1 else ""
         reg = row[2].strip() if len(row) > 2 else ""
         evt = row[3].strip() if len(row) > 3 else ""
-        
         if not name or response not in {"Yes", "No"}: continue
         record_date = parse_attendance_date(reg, evt)
         if record_date is None: continue
-        
         key = (name, record_date)
         status = status_by_name_date.setdefault(key, {"yes": False, "no": False})
         if response == "Yes": status["yes"] = True
         else: status["no"] = True
-        
     counts = {}
     for (name, record_date), status in status_by_name_date.items():
         if status["yes"] and not status["no"]:
@@ -176,104 +216,18 @@ def build_total_attendance(rows, year=None):
         response = row[1].strip() if len(row) > 1 else ""
         reg = row[2].strip() if len(row) > 2 else ""
         evt = row[3].strip() if len(row) > 3 else ""
-        
         if not name or response not in {"Yes", "No"}: continue
         record_date = parse_attendance_date(reg, evt)
         if record_date is None: continue
         if year is not None and record_date.year != year: continue
-        
         key = (name, record_date)
         status = status_by_name_date.setdefault(key, {"yes": False, "no": False})
         if response == "Yes": status["yes"] = True
         else: status["no"] = True
-
     totals = {}
     for (name, _), status in status_by_name_date.items():
         if status["yes"] and not status["no"]: totals[name] = totals.get(name, 0) + 1
     return totals
-
-# --- PROCESS LOGIKA ---
-
-def process_main_form_submission():
-    client = get_gsheet_connection()
-    if client is None: return
-
-    try:
-        name_val = st.session_state.name_select
-        answer_val = st.session_state.answer_radio
-        past_date_val = st.session_state.get("past_date_select", "") 
-        plus_count_val = st.session_state.plus_count if answer_val == "Yes" else "0"
-        
-        ts = datetime.now(HUNGARY_TZ).strftime("%Y-%m-%d %H:%M:%S")
-        
-        if not st.session_state.get("past_event_check", False):
-             dates = generate_tuesday_dates(past_count=0, future_count=1)
-             if dates: past_date_val = dates[0]
-
-        rows_to_add = []
-        rows_to_add.append([name_val, answer_val, ts, past_date_val])
-        
-        guests_added = 0
-        if answer_val == "Yes":
-            for i in range(int(plus_count_val)):
-                extra_name = st.session_state.get(f"plus_name_txt_{i}", "").strip()
-                if extra_name:
-                    rows_to_add.append([f"{name_val} - {extra_name}", "Yes", ts, past_date_val])
-                    guests_added += 1
-        
-        success, msg = save_data_to_gsheet(client, rows_to_add)
-        
-        if success:
-            st.success(f"Köszönjük, {name_val}!")
-            st.session_state["answer_radio"] = "Yes"
-            st.session_state["plus_count"] = "0"
-        else:
-            st.error(f"Hiba: {msg}")
-
-    except Exception as e:
-        st.error(f"Hiba: {e}")
-
-# --- ADMIN LOGIKA ---
-
-def reset_admin_form(set_step=1):
-    st.session_state.admin_step = set_step
-    st.session_state.admin_attendance = {name: {"present": False, "guests": "0"} for name in MAIN_NAME_LIST}
-    st.session_state.admin_guest_data = {} 
-
-def admin_save_guest_name(key):
-    st.session_state.admin_guest_data[key] = st.session_state.get(key, "")
-
-def admin_save_date():
-    st.session_state.admin_date = st.session_state.admin_date_selector
-
-def process_admin_submission(client):
-    try:
-        target_date = st.session_state.admin_date
-        ts = datetime.now(HUNGARY_TZ).strftime("%Y-%m-%d %H:%M:%S")
-        rows_to_add = []
-        
-        for name, data in st.session_state.admin_attendance.items():
-            if data["present"]:
-                rows_to_add.append([name, "Yes", ts, target_date])
-                guest_count = int(data["guests"])
-                if guest_count > 0:
-                    for i in range(guest_count):
-                        g_name = st.session_state.admin_guest_data.get(f"admin_guest_{name}_{i}", "").strip()
-                        if g_name:
-                            rows_to_add.append([f"{name} - {g_name}", "Yes", ts, target_date])
-        
-        if not rows_to_add:
-            st.warning("Nincs adat.")
-            return
-
-        success, msg = save_data_to_gsheet(client, rows_to_add)
-        if success:
-            st.success("Sikeres mentés!")
-            reset_admin_form()
-        else:
-            st.error(f"Hiba: {msg}")
-    except Exception as e:
-        st.error(f"Hiba: {e}")
 
 # --- MEGJELENÍTÉS ---
 
@@ -282,8 +236,9 @@ def render_main_page(client):
     st.header(f"Következő alkalom létszáma: {get_counter_value(client)} fő")
     st.markdown("---")
 
-    st.selectbox("Válassz nevet:", MAIN_NAME_LIST, key="name_select")
-    st.radio("Jössz edzésre?", ["Yes", "No"], horizontal=True, key="answer_radio")
+    rows = get_attendance_rows(client)
+    name = st.selectbox("Válassz nevet:", MAIN_NAME_LIST, key="name_select")
+    answer = st.radio("Jössz edzésre?", ["Yes", "No"], horizontal=True, key="answer_radio")
     
     if st.checkbox("Múltbeli alkalmat regisztrálok", key="past_event_check"):
         dt = generate_tuesday_dates()
@@ -292,14 +247,53 @@ def render_main_page(client):
 
     if st.session_state.answer_radio == "Yes":
         st.selectbox("Vendégek száma:", PLUS_PEOPLE_COUNT, key="plus_count")
-        if int(st.session_state.plus_count) > 0:
-            for i in range(int(st.session_state.plus_count)):
-                st.text_input(f"{i+1}. vendég neve:", key=f"plus_name_txt_{i}")
+        
+        num_guests = int(st.session_state.plus_count)
+        if num_guests > 0:
+            history = get_historical_guests_list(rows, name)
+            options = ["-- Új név írása --"] + history
+            
+            for i in range(num_guests):
+                sel = st.selectbox(f"{i+1}. vendég kiválasztása:", options, key=f"sel_plus_{i}")
+                if sel == "-- Új név írása --":
+                    st.text_input(f"Írd be a {i+1}. vendég nevét:", key=f"plus_name_txt_{i}")
+                else:
+                    # Session state-be mentjük a választást, hogy a küldés funkció lássa
+                    st.session_state[f"plus_name_txt_{i}"] = sel
 
-    st.button("Küldés", on_click=process_main_form_submission)
+    if st.button("Küldés"):
+        try:
+            name_val = st.session_state.name_select
+            answer_val = st.session_state.answer_radio
+            past_date_val = st.session_state.get("past_date_select", "") 
+            plus_count_val = st.session_state.plus_count if answer_val == "Yes" else "0"
+            ts = datetime.now(HUNGARY_TZ).strftime("%Y-%m-%d %H:%M:%S")
+            
+            if not st.session_state.get("past_event_check", False):
+                 dates = generate_tuesday_dates(past_count=0, future_count=1)
+                 if dates: past_date_val = dates[0]
+
+            rows_to_add = [[name_val, answer_val, ts, past_date_val]]
+            if answer_val == "Yes":
+                for i in range(int(plus_count_val)):
+                    extra_name = st.session_state.get(f"plus_name_txt_{i}", "").strip()
+                    if extra_name:
+                        rows_to_add.append([f"{name_val} - {extra_name}", "Yes", ts, past_date_val])
+            
+            success, msg = save_data_to_gsheet(client, rows_to_add)
+            if success:
+                st.success(f"Köszönjük, {name_val}!")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error(f"Hiba: {msg}")
+        except Exception as e:
+            st.error(f"Váratlan hiba: {e}")
 
 def render_admin_page(client):
     st.title("Admin Regisztráció")
+    rows = get_attendance_rows(client)
+    
     if st.session_state.admin_step == 1:
         dt = generate_tuesday_dates()
         idx = dt.index(st.session_state.admin_date) if st.session_state.admin_date in dt else 0
@@ -322,10 +316,19 @@ def render_admin_page(client):
         if not pg: st.info("Nincs vendég.")
         
         for n, c in pg:
-            st.subheader(n)
+            st.subheader(f"**{n}** vendégei:")
+            history = get_historical_guests_list(rows, n)
+            options = ["-- Új név írása --"] + history
+            
             for i in range(c):
-                k = f"admin_guest_{n}_{i}"
-                st.text_input(f"{i+1}. vendég:", key=k, on_change=admin_save_guest_name, args=(k,))
+                k_sel = f"admin_sel_{n}_{i}"
+                k_txt = f"admin_guest_{n}_{i}"
+                
+                sel = st.selectbox(f"{i+1}. vendég kiválasztása ({n}):", options, key=k_sel)
+                if sel == "-- Új név írása --":
+                    st.text_input(f"{i+1}. vendég neve:", key=k_txt, on_change=admin_save_guest_name, args=(k_txt,))
+                else:
+                    st.session_state.admin_guest_data[k_txt] = sel
         
         c1, c2 = st.columns(2)
         if c1.button("Vissza"): st.session_state.admin_step = 1; st.rerun()
@@ -334,8 +337,38 @@ def render_admin_page(client):
 
     elif st.session_state.admin_step == 3:
         st.info(f"Dátum: {st.session_state.admin_date}")
-        if st.button("Mentés a Google Sheets-be"): process_admin_submission(client)
+        if st.button("Mentés a Google Sheets-be"): 
+            process_admin_submission(client)
         if st.button("Vissza"): st.session_state.admin_step = 2; st.rerun()
+
+def render_recent_submissions_page(df_all):
+    st.title("📝 Friss Beküldések")
+    st.subheader("🔹 Ebben a munkamenetben felvitt adatok")
+    
+    if st.session_state.session_submissions:
+        sdf = pd.DataFrame(st.session_state.session_submissions, columns=["Név", "Jön-e", "Regisztráció Időpontja", "Alkalom Dátuma"])
+        st.table(sdf)
+        
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            if st.button("Összes törlése"):
+                st.session_state.session_submissions = []
+                st.rerun()
+        with col2:
+            to_remove = st.multiselect("Csak bizonyos sorok törlése:", range(len(st.session_state.session_submissions)), 
+                                        format_func=lambda i: f"{st.session_state.session_submissions[i][0]} ({st.session_state.session_submissions[i][3]})")
+            if to_remove and st.button("Kijelöltek törlése"):
+                st.session_state.session_submissions = [item for i, item in enumerate(st.session_state.session_submissions) if i not in to_remove]
+                st.rerun()
+    else:
+        st.info("Még nem vittél fel adatot.")
+    
+    st.markdown("---")
+    st.subheader("📂 Legutóbbi 20 sor a Google Sheet-ből")
+    rows = get_attendance_rows(client)
+    if rows:
+        df = pd.DataFrame(rows[1:], columns=rows[0])
+        st.dataframe(df.tail(20).iloc[::-1], use_container_width=True)
 
 def render_stats_page(client):
     st.title("Statisztika")
@@ -355,14 +388,50 @@ def render_leaderboard_page(client):
         v = st.selectbox("Nézet:", ["All time", "2024", "2025"])
         totals = build_total_attendance(rows, int(v) if v != "All time" else None)
         legacy = dict(LEGACY_ATTENDANCE_TOTALS) if v == "All time" else dict(YEARLY_LEGACY_TOTALS.get(int(v), {}))
-        
         for n, c in totals.items(): legacy[n] = legacy.get(n, 0) + c
-        
         data = [{"#": i, "Név": n, "Összesen": c} for i, (n, c) in enumerate(sorted(legacy.items(), key=lambda x: (-x[1], x[0])), 1)]
         st.dataframe(data, use_container_width=True)
 
+# --- ADMIN HELPER FUNCTIONS ---
+
+def reset_admin_form(set_step=1):
+    st.session_state.admin_step = set_step
+    st.session_state.admin_attendance = {name: {"present": False, "guests": "0"} for name in MAIN_NAME_LIST}
+    st.session_state.admin_guest_data = {} 
+
+def admin_save_guest_name(key):
+    st.session_state.admin_guest_data[key] = st.session_state.get(key, "")
+
+def admin_save_date():
+    st.session_state.admin_date = st.session_state.admin_date_selector
+
+def process_admin_submission(client):
+    try:
+        target_date = st.session_state.admin_date
+        ts = datetime.now(HUNGARY_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        rows_to_add = []
+        for name, data in st.session_state.admin_attendance.items():
+            if data["present"]:
+                rows_to_add.append([name, "Yes", ts, target_date])
+                guest_count = int(data["guests"])
+                if guest_count > 0:
+                    for i in range(guest_count):
+                        g_name = st.session_state.admin_guest_data.get(f"admin_guest_{name}_{i}", "").strip()
+                        if g_name: rows_to_add.append([f"{name} - {g_name}", "Yes", ts, target_date])
+        success, msg = save_data_to_gsheet(client, rows_to_add)
+        if success:
+            st.success("Sikeres mentés!")
+            reset_admin_form()
+            time.sleep(1)
+            st.rerun()
+        else:
+            st.error(msg)
+    except Exception as e:
+        st.error(f"Hiba: {e}")
+
 # --- APP START ---
 
+add_visual_styling()
 tuesday_dates = generate_tuesday_dates()
 default_date = tuesday_dates[0] if tuesday_dates else "Nincs dátum"
 
@@ -373,10 +442,11 @@ if 'answer_radio' not in st.session_state: st.session_state.answer_radio = "Yes"
 if 'name_select' not in st.session_state: st.session_state.name_select = MAIN_NAME_LIST[0]
 if 'plus_count' not in st.session_state: st.session_state.plus_count = "0"
 
-page = st.sidebar.radio("Menü", ["Jelenléti Ív", "Admin Regisztráció", "Statisztika", "Leaderboard"])
+page = st.sidebar.radio("Menü", ["Jelenléti Ív", "Admin Regisztráció", "Friss Beküldések", "Statisztika", "Leaderboard"])
 client = get_gsheet_connection()
 
 if page == "Jelenléti Ív": render_main_page(client)
 elif page == "Admin Regisztráció": render_admin_page(client)
+elif page == "Friss Beküldések": render_recent_submissions_page(None)
 elif page == "Statisztika": render_stats_page(client)
 elif page == "Leaderboard": render_leaderboard_page(client)
