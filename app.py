@@ -167,7 +167,7 @@ def get_attendance_rows_fs(_db):
         for doc in docs:
             d = doc.to_dict()
             data.append([
-                doc.id, # Elmentjük a Firestore dokumentum azonosítóját a módosításokhoz
+                doc.id, 
                 d.get("name"), 
                 d.get("status"), 
                 d.get("timestamp"), 
@@ -581,6 +581,42 @@ def render_database_page(gs_client, fs_db):
     with tab2:
         st.subheader("Firestore Adatbázis megtekintése és szerkesztése")
         st.markdown("Ide kerülnek lementésre azok az adatok is, amiket a tesztelés kedvéért a jövőbeni Sheet mentes működéshez gyűjtünk.")
+        
+        # --- ADATMIGRÁCIÓS SZEKCIÓ ---
+        st.markdown("---")
+        with st.expander("🛠️ Adatmigráció (Sheet -> Firestore)"):
+            st.warning("Ezzel a gombbal az összes eddigi adatot átmásolhatod a Google Sheet-ből a Firestore-ba. Csak egyszer használd, hogy ne legyenek duplikációk!")
+            if st.button("🚀 Adatok átmásolása", type="primary"):
+                with st.spinner("Másolás folyamatban... Ez beletelhet kis időbe."):
+                    gs_rows = get_attendance_rows_gs(gs_client)
+                    if len(gs_rows) > 1:
+                        success_count = 0
+                        for r in gs_rows[1:]:
+                            try:
+                                name = r[0] if len(r) > 0 else ""
+                                if not name: continue
+                                status = r[1] if len(r) > 1 else "Yes"
+                                timestamp = r[2] if len(r) > 2 else ""
+                                event_date = r[3] if len(r) > 3 else ""
+                                mode_val = r[5] if len(r) > 5 else "valós"
+                                
+                                fs_db.collection(FIRESTORE_COLLECTION).add({
+                                    "name": name,
+                                    "status": status,
+                                    "timestamp": timestamp,
+                                    "event_date": event_date,
+                                    "mode": mode_val
+                                })
+                                success_count += 1
+                            except Exception as e:
+                                pass
+                        st.success(f"Kész! {success_count} bejegyzés átmásolva a felhőbe.")
+                        st.cache_data.clear()
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        st.info("Nincs másolható adat a Sheet-ben.")
+        st.markdown("---")
         
         df_fs = get_attendance_rows_fs(fs_db)
         
