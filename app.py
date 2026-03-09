@@ -358,16 +358,20 @@ def generate_pdf_bytes(df_osszesito, month_name, year):
     pdf.add_page()
     
     def safe_txt(t):
-        return str(t).translate(str.maketrans('őűóúöüíáéŐŰÓÚÖÜÍÁÉ', 'ouououiaeOUOUOUIAE')).encode('latin-1', 'replace').decode('latin-1')
+        t_str = str(t)
+        # A standard Arial betűtípus (latin-1) az 'ő' és 'ű' betűket nem ismeri, 
+        # de a többi magyar ékezetet (á, é, í, ó, ö, ú, ü) gond nélkül viszi!
+        t_str = t_str.replace('ő', 'ö').replace('ű', 'ü').replace('Ő', 'Ö').replace('Ű', 'Ü')
+        return t_str.encode('latin-1', 'replace').decode('latin-1')
 
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, txt=safe_txt(f"Havi Roplabda Elszamolas - {year}. {month_name}"), ln=True, align='C')
+    pdf.cell(0, 10, txt=safe_txt(f"Havi Röplabda Elszámolás - {year}. {month_name}"), ln=True, align='C')
     pdf.ln(10)
     
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(90, 10, safe_txt("Nev"), border=1)
-    pdf.cell(40, 10, safe_txt("Reszvetel szama"), border=1, align='C')
-    pdf.cell(50, 10, safe_txt("Fizetendo"), border=1, align='R')
+    pdf.cell(90, 10, safe_txt("Név"), border=1)
+    pdf.cell(40, 10, safe_txt("Részvétel száma"), border=1, align='C')
+    pdf.cell(50, 10, safe_txt("Fizetendő"), border=1, align='R')
     pdf.ln()
     
     pdf.set_font("Arial", "", 12)
