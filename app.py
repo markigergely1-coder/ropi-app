@@ -190,7 +190,6 @@ def build_total_attendance(rows, year=None):
 
 @st.cache_data(ttl=60)
 def get_invoices_info(_client):
-    """Lekéri a számlákat a Google Sheetből a kiválasztó listához."""
     if _client is None: return []
     try:
         ss = _client.open(GSHEET_NAME)
@@ -215,7 +214,6 @@ def get_invoices_info(_client):
         except:
             continue
         
-        # A számla mindig az előző hónapra vonatkozik
         if inv_date.month == 1:
             t_month = 12
             t_year = inv_date.year - 1
@@ -231,7 +229,6 @@ def get_invoices_info(_client):
             "amount": amount
         })
         
-    # Megfordítjuk a listát, hogy a legújabb számla legyen legfelül
     return list(reversed(invoices))
 
 def calculate_monthly_accounting(gs_client, inv_dict):
@@ -271,7 +268,6 @@ def calculate_monthly_accounting(gs_client, inv_dict):
         reg_val = row[2] if len(row) > 2 else ""
         evt_val = row[3] if len(row) > 3 else ""
         
-        # Kihagyjuk a teszt adatokat a kalkulációból
         mode_val = row[5].strip().lower() if len(row) > 5 else "valós"
         if mode_val == "teszt": continue
 
@@ -379,7 +375,6 @@ def render_admin_page(gs_client, fs_client):
         st.selectbox("Dátum kiválasztása:", dt, index=idx, key="admin_date_selector", on_change=admin_save_date)
         st.markdown("---")
         
-        # UX JAVÍTÁS: Egy sor, bekeretezve, középre igazítva
         for name in MAIN_NAME_LIST:
             with st.container(border=True):
                 c1, c2, c3 = st.columns([2, 1, 1], vertical_alignment="center")
@@ -436,7 +431,6 @@ def render_admin_page(gs_client, fs_client):
                 rows_to_add = []
                 for name, data in st.session_state.admin_attendance.items():
                     if data["present"]:
-                        # A 6. oszlopba (F oszlop) bekerül a "valós" vagy "teszt" érték
                         rows_to_add.append([name, "Yes", ts, target_date, "", current_mode])
                         for i in range(int(data["guests"])):
                             g_name = st.session_state.admin_guest_data.get(f"admin_guest_{name}_{i}", "").strip()
@@ -458,12 +452,75 @@ def render_admin_page(gs_client, fs_client):
             st.session_state.admin_step = 2
             st.rerun()
 
+# --- ÚJ: ALKALMAK ÁTTEKINTÉSE ---
+def render_attendance_overview_page(client):
+    st.title("📅 Alkalmak Áttekintése")
+    st.markdown("Itt ellenőrizheted a résztvevők számát és névsorát az elmúlt 8 alkalomra visszamenőleg.")
+
+    # Pontosan 8 visszamenőleges dátum (jövőbeliek nélkül)
+    dates = generate_tuesday_dates(past_count=8, future_count=0)
+    
+    selected_date_str = st.selectbox("Válassz egy dátumot az áttekintéshez:", dates)
+
+    if selected_date_str:
+        selected_date = parse_hungarian_date(selected_date_str)
+        
+        with st.spinner("Adatok betöltése..."):
+            rows = get_attendance_rows_gs(client)
+        
+        if not rows:
+            st.warning("Nem sikerült betölteni a Google Sheets adatokat.")
+            return
+
+        yes_set = set()
+        no_set = set()
+
+        for row in rows[1:]:
+            if len(row) < 2: continue
+            name = row[0].strip()
+            is_coming = row[1].strip()
+            
+            if not name: continue
+            
+            reg_val = row[2] if len(row) > 2 else ""
+            evt_val = row[3] if len(row) > 3 else ""
+            
+            # Teszt adatok kihagyása a listázásból
+            mode_val = row[5].strip().lower() if len(row) > 5 else "valós"
+            if mode_val == "teszt": continue
+
+            rel_date = parse_hungarian_date(evt_val) or parse_hungarian_date(reg_val)
+            
+            if rel_date == selected_date:
+                if is_coming == "Yes": yes_set.add(name)
+                elif is_coming == "No": no_set.add(name)
+
+        # Végső résztvevők (akik Igen-t mondtak, és utána nem mondták le)
+        final_attendees = sorted(list(yes_set - no_set))
+        count = len(final_attendees)
+        
+        st.markdown("---")
+        
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            st.metric(label="Résztvevők száma", value=f"{count} fő")
+            
+        with col2:
+            if count > 0:
+                st.subheader("Résztvevők névsora:")
+                # Két oszlop a nevek szebb megjelenítéséhez
+                name_cols = st.columns(2)
+                for i, name in enumerate(final_attendees):
+                    name_cols[i % 2].markdown(f"✅ **{name}**")
+            else:
+                st.info("Erre az alkalomra nincs érvényes regisztráció.")
+
+
 def render_database_page(client):
     st.title("🗂️ Adatbázis")
     
     tab1, tab2 = st.tabs(["📝 Beküldött Adatok", "🏆 Ranglista"])
     
-    # 1. Tab: Beküldött adatok
     with tab1:
         st.subheader("Google Sheet adatok megtekintése")
         rows = get_attendance_rows_gs(client)
@@ -490,7 +547,6 @@ def render_database_page(client):
         else:
             st.warning("Nem sikerült betölteni a Google Sheets adatokat.")
 
-    # 2. Tab: Ranglista
     with tab2:
         st.subheader("Részvételi Ranglista")
         rows = get_attendance_rows_gs(client)
@@ -584,10 +640,13 @@ else:
         st.rerun()
         
     st.sidebar.markdown("---")
-    page = st.sidebar.radio("Menü", ["Admin Regisztráció", "Adatbázis", "Havi Elszámolás"])
+    # Kibővített menü az új füllel
+    page = st.sidebar.radio("Menü", ["Admin Regisztráció", "Alkalmak Áttekintése", "Adatbázis", "Havi Elszámolás"])
 
     if page == "Admin Regisztráció": 
         render_admin_page(gs_client, fs_db)
+    elif page == "Alkalmak Áttekintése":
+        render_attendance_overview_page(gs_client)
     elif page == "Adatbázis": 
         render_database_page(gs_client)
     elif page == "Havi Elszámolás":
