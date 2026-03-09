@@ -90,7 +90,6 @@ def get_firestore_db():
                 if "\\n" in pk: pk = pk.replace("\\n", "\n")
                 creds_dict["private_key"] = pk
             creds = service_account.Credentials.from_service_account_info(creds_dict)
-            # Kifejezetten megadjuk a projekt ID-t a biztonság kedvéért
             return firestore.Client(credentials=creds, project=creds_dict.get("project_id"))
         elif os.path.exists(CREDENTIALS_FILE):
             with open(CREDENTIALS_FILE, 'r') as f:
@@ -119,7 +118,6 @@ def save_all_data(gs_client, fs_client, rows):
     success_fs = False
     error_msg_fs = ""
     
-    # 1. Mentés Google Sheets-be (Kötelező egyelőre)
     if gs_client:
         try:
             sheet = gs_client.open(GSHEET_NAME).sheet1
@@ -128,7 +126,6 @@ def save_all_data(gs_client, fs_client, rows):
         except Exception as e:
             return False, f"Hiba a Google Sheet mentésekor: {e}"
 
-    # 2. Mentés Firestore-ba 
     if fs_client:
         try:
             for r in rows:
@@ -148,11 +145,9 @@ def save_all_data(gs_client, fs_client, rows):
             
     st.cache_data.clear()
     
-    # Értékeljük ki a sikert, hogy a felhasználó pontosan tudja, mi történt
     if success_gs and success_fs: 
         return True, "Sikeres mentés a Google Sheet-be és a Firestore-ba is! ✅☁️"
     elif success_gs and not success_fs: 
-        # Most már látni fogod ezt a hibaüzenetet, ha valamiért nem ment a felhőbe!
         return True, f"Mentve a Sheet-be, de a Firestore HIBA miatt nem mentette a felhőbe: {error_msg_fs} ⚠️"
     else: 
         return False, "Kritikus hiba, egyik adatbázis sem érhető el."
@@ -165,24 +160,24 @@ def get_attendance_rows_gs(_client):
 
 @st.cache_data(ttl=60)
 def get_attendance_rows_fs(_db):
-    """Lekéri a Firestore adatokat és DataFrame-be teszi."""
-    if _db is None: return pd.DataFrame()
+    if _db is None: return pd.DataFrame(columns=["ID", "Név", "Jön-e", "Regisztráció Időpontja", "Alkalom Dátuma", "Mód"])
     try:
         docs = _db.collection(FIRESTORE_COLLECTION).order_by("timestamp", direction=firestore.Query.DESCENDING).stream()
         data = []
         for doc in docs:
             d = doc.to_dict()
             data.append([
+                doc.id, # Elmentjük a Firestore dokumentum azonosítóját a módosításokhoz
                 d.get("name"), 
                 d.get("status"), 
                 d.get("timestamp"), 
                 d.get("event_date"), 
                 d.get("mode", "ismeretlen")
             ])
-        return pd.DataFrame(data, columns=["Név", "Jön-e", "Regisztráció Időpontja", "Alkalom Dátuma", "Mód"])
+        return pd.DataFrame(data, columns=["ID", "Név", "Jön-e", "Regisztráció Időpontja", "Alkalom Dátuma", "Mód"])
     except Exception as e: 
         st.error(f"Hiba a Firestore adatok betöltésekor: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["ID", "Név", "Jön-e", "Regisztráció Időpontja", "Alkalom Dátuma", "Mód"])
 
 def get_historical_guests_list(rows, main_name):
     if not rows: return []
@@ -482,7 +477,7 @@ def render_admin_page(gs_client, fs_client):
                     time.sleep(3)
                     st.rerun()
                 else: 
-                    st.warning(msg) # A részleges hibát is itt jelezzük ki!
+                    st.warning(msg)
                     time.sleep(4)
                     reset_admin_form()
                     st.rerun()
@@ -555,7 +550,6 @@ def render_attendance_overview_page(client):
 def render_database_page(gs_client, fs_db):
     st.title("🗂️ Adatbázis")
     
-    # Kiegészítve a Firestore (Felhő) füllel
     tab1, tab2, tab3 = st.tabs(["📝 Beküldött Adatok (Sheet)", "☁️ Felhő Adatok (Firestore)", "🏆 Ranglista"])
     
     with tab1:
@@ -585,19 +579,77 @@ def render_database_page(gs_client, fs_db):
             st.warning("Nem sikerült betölteni a Google Sheets adatokat.")
 
     with tab2:
-        st.subheader("Firestore Adatbázis megtekintése")
+        st.subheader("Firestore Adatbázis megtekintése és szerkesztése")
         st.markdown("Ide kerülnek lementésre azok az adatok is, amiket a tesztelés kedvéért a jövőbeni Sheet mentes működéshez gyűjtünk.")
+        
         df_fs = get_attendance_rows_fs(fs_db)
         
         if not df_fs.empty:
+            edit_mode = st.toggle("✏️ Szerkesztés mód bekapcsolása")
+            
             col_sort_fs, col_order_fs = st.columns([2, 1])
             with col_sort_fs:
-                sort_col_fs = st.selectbox("Rendezés alapja:", df_fs.columns, index=2, key="sort2")
+                # Az "ID" oszlopot kivesszük a rendezési opciók közül
+                sortable_cols = [c for c in df_fs.columns if c != "ID"]
+                sort_col_fs = st.selectbox("Rendezés alapja:", sortable_cols, index=2, key="sort2")
             with col_order_fs:
                 ascending_fs = st.checkbox("Növekvő sorrend (legrégebbi felül)", value=False, key="asc2")
                 
-            df_fs = df_fs.sort_values(by=sort_col_fs, ascending=ascending_fs)
-            st.dataframe(df_fs, use_container_width=True)
+            # Fontos: Rendezés után reseteljük az indexet, hogy az interaktív szerkesztő indexei passzoljanak
+            df_fs = df_fs.sort_values(by=sort_col_fs, ascending=ascending_fs).reset_index(drop=True)
+            
+            if edit_mode:
+                st.info("💡 **Tipp:** Kattints duplán a cellákra a szerkesztéshez! Egy sor törléséhez jelöld ki a sort bal oldalt és nyomj a billentyűzeten **Delete** gombot. Új sor hozzáadásához görgess a táblázat aljára.")
+                
+                # Szerkeszthető táblázat
+                edited_df = st.data_editor(
+                    df_fs, 
+                    key="fs_editor", 
+                    num_rows="dynamic", # Engedélyezi a sorok hozzáadását/törlését
+                    column_config={"ID": None}, # Eltünteti a csúnya belső ID-kat a felületről
+                    use_container_width=True
+                )
+                
+                if st.button("💾 Változtatások mentése a felhőbe", type="primary"):
+                    changes = st.session_state["fs_editor"]
+                    
+                    if changes.get("edited_rows") or changes.get("added_rows") or changes.get("deleted_rows"):
+                        try:
+                            # 1. Törölt sorok feldolgozása
+                            for row_idx in changes.get("deleted_rows", []):
+                                doc_id = df_fs.iloc[row_idx]["ID"]
+                                fs_db.collection(FIRESTORE_COLLECTION).document(doc_id).delete()
+                            
+                            # 2. Módosított sorok feldolgozása
+                            col_map = {"Név": "name", "Jön-e": "status", "Regisztráció Időpontja": "timestamp", "Alkalom Dátuma": "event_date", "Mód": "mode"}
+                            for row_idx, edits in changes.get("edited_rows", {}).items():
+                                doc_id = df_fs.iloc[row_idx]["ID"]
+                                update_data = {col_map[k]: v for k, v in edits.items() if k in col_map}
+                                if update_data:
+                                    fs_db.collection(FIRESTORE_COLLECTION).document(doc_id).update(update_data)
+                                    
+                            # 3. Hozzáadott sorok feldolgozása
+                            for new_row in changes.get("added_rows", []):
+                                add_data = {
+                                    "name": new_row.get("Név", ""),
+                                    "status": new_row.get("Jön-e", "Yes"),
+                                    "timestamp": new_row.get("Regisztráció Időpontja", datetime.now(HUNGARY_TZ).strftime("%Y-%m-%d %H:%M:%S")),
+                                    "event_date": new_row.get("Alkalom Dátuma", ""),
+                                    "mode": new_row.get("Mód", "valós")
+                                }
+                                fs_db.collection(FIRESTORE_COLLECTION).add(add_data)
+                                
+                            st.success("Sikeresen frissítetted a felhő adatbázist! ✅")
+                            st.cache_data.clear() # Frissítjük a lekérdezést
+                            time.sleep(1.5)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Hiba történt a mentés során: {e}")
+                    else:
+                        st.info("Nem történt változtatás a táblázatban.")
+            else:
+                # Sima (nem szerkeszthető) nézet
+                st.dataframe(df_fs.drop(columns=["ID"]), use_container_width=True)
         else:
             st.info("Még nincsenek adatok a Firestore adatbázisban, vagy a csatlakozás sikertelen volt.")
 
