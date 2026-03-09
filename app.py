@@ -129,7 +129,8 @@ def save_all_data(gs_client, fs_client, rows):
                     "name": r[0],
                     "status": r[1],
                     "timestamp": r[2],
-                    "event_date": r[3]
+                    "event_date": r[3],
+                    "mode": r[5] if len(r) > 5 else "ismeretlen"
                 })
         except: 
             # Ha a Firestore hibára fut, nem omlik össze, megy tovább
@@ -186,8 +187,31 @@ def build_total_attendance(rows, year=None):
 
 # --- MEGJELENÍTÉS ---
 
+def render_landing_page():
+    st.markdown("<h1 style='text-align: center; margin-bottom: 30px;'>🏐 Röpi App</h1>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; color: gray; margin-bottom: 50px;'>Kérjük, válassz üzemmódot a belépéshez:</h3>", unsafe_allow_html=True)
+    
+    col1, col2, col3, col4 = st.columns([1, 2, 2, 1])
+    
+    with col2:
+        if st.button("🟢 Jelenlét felvitel\n\n(Valós adatok mentése)", use_container_width=True, type="primary"):
+            st.session_state.app_mode = "valós"
+            st.rerun()
+            
+    with col3:
+        if st.button("🧪 Teszt\n\n(Kipróbálás)", use_container_width=True):
+            st.session_state.app_mode = "teszt"
+            st.rerun()
+
 def render_admin_page(gs_client, fs_client):
     st.title("🛠️ Admin Regisztráció")
+    
+    # Kijelző a jelenlegi üzemmódról
+    if st.session_state.app_mode == "teszt":
+        st.warning("⚠️ Figyelem: Jelenleg TESZT üzemmódban vagy. Az adatok 'teszt' címkével kerülnek mentésre.")
+    else:
+        st.success("🟢 Jelenleg VALÓS Jelenlét felvitel üzemmódban vagy.")
+        
     rows = get_attendance_rows_gs(gs_client)
     
     if st.session_state.admin_step == 1:
@@ -196,11 +220,19 @@ def render_admin_page(gs_client, fs_client):
         st.selectbox("Dátum kiválasztása:", dt, index=idx, key="admin_date_selector", on_change=admin_save_date)
         st.markdown("---")
         
+        # UX javítás: Bekeretezett sorok és függőleges igazítás
         for name in MAIN_NAME_LIST:
-            c1, c2, c3 = st.columns([2, 1, 1])
-            c1.write(name)
-            st.session_state.admin_attendance[name]["present"] = c2.checkbox("Jelen volt", value=st.session_state.admin_attendance[name]["present"], key=f"p_{name}")
-            st.session_state.admin_attendance[name]["guests"] = c3.selectbox("Vendégek száma", PLUS_PEOPLE_COUNT, index=PLUS_PEOPLE_COUNT.index(st.session_state.admin_attendance[name]["guests"]), key=f"g_{name}")
+            with st.container(border=True):
+                c1, c2, c3 = st.columns([2, 1, 1], vertical_alignment="center")
+                c1.markdown(f"**{name}**")
+                st.session_state.admin_attendance[name]["present"] = c2.checkbox("Jelen volt", value=st.session_state.admin_attendance[name]["present"], key=f"p_{name}")
+                st.session_state.admin_attendance[name]["guests"] = c3.selectbox(
+                    "Vendégek száma", 
+                    PLUS_PEOPLE_COUNT, 
+                    index=PLUS_PEOPLE_COUNT.index(st.session_state.admin_attendance[name]["guests"]), 
+                    key=f"g_{name}", 
+                    label_visibility="collapsed" # Eltüntetjük a feliratot, hogy pontosan középen maradjon
+                )
         
         st.markdown("---")
         if st.button("Tovább a vendégnevekhez ➡️", type="primary"): 
@@ -215,15 +247,16 @@ def render_admin_page(gs_client, fs_client):
             st.success("Nincsenek rögzítendő vendégek. Készen állsz a mentésre!")
             
         for n, c in pg:
-            st.subheader(f"**{n}** vendégei:")
-            history = get_historical_guests_list(rows, n)
-            options = ["-- Új név írása --"] + history
-            for i in range(c):
-                sel = st.selectbox(f"{i+1}. vendég ({n}):", options, key=f"admin_sel_{n}_{i}")
-                if sel == "-- Új név írása --":
-                    st.text_input(f"Vendég pontos neve:", key=f"admin_guest_{n}_{i}", on_change=admin_save_guest_name, args=(f"admin_guest_{n}_{i}",))
-                else: 
-                    st.session_state.admin_guest_data[f"admin_guest_{n}_{i}"] = sel
+            with st.container(border=True):
+                st.subheader(f"**{n}** vendégei:")
+                history = get_historical_guests_list(rows, n)
+                options = ["-- Új név írása --"] + history
+                for i in range(c):
+                    sel = st.selectbox(f"{i+1}. vendég ({n}):", options, key=f"admin_sel_{n}_{i}")
+                    if sel == "-- Új név írása --":
+                        st.text_input(f"Vendég pontos neve:", key=f"admin_guest_{n}_{i}", on_change=admin_save_guest_name, args=(f"admin_guest_{n}_{i}",))
+                    else: 
+                        st.session_state.admin_guest_data[f"admin_guest_{n}_{i}"] = sel
                     
         st.markdown("---")
         c1, c2 = st.columns(2)
@@ -241,14 +274,17 @@ def render_admin_page(gs_client, fs_client):
             try:
                 target_date = st.session_state.admin_date
                 ts = datetime.now(HUNGARY_TZ).strftime("%Y-%m-%d %H:%M:%S")
+                current_mode = st.session_state.app_mode
+                
                 rows_to_add = []
                 for name, data in st.session_state.admin_attendance.items():
                     if data["present"]:
-                        rows_to_add.append([name, "Yes", ts, target_date])
+                        # 6 elemű tömb: [Név, Státusz, Regisztráció, Dátum, Üres (E oszlop miatt), Mód (F oszlopba)]
+                        rows_to_add.append([name, "Yes", ts, target_date, "", current_mode])
                         for i in range(int(data["guests"])):
                             g_name = st.session_state.admin_guest_data.get(f"admin_guest_{name}_{i}", "").strip()
                             if g_name: 
-                                rows_to_add.append([f"{name} - {g_name}", "Yes", ts, target_date])
+                                rows_to_add.append([f"{name} - {g_name}", "Yes", ts, target_date, "", current_mode])
                                 
                 success, msg = save_all_data(gs_client, fs_client, rows_to_add)
                 if success:
@@ -276,9 +312,19 @@ def render_database_page(client):
         st.subheader("Google Sheet adatok megtekintése")
         rows = get_attendance_rows_gs(client)
         if rows:
-            # Csak az első 4 oszlopot használjuk biztos ami biztos
-            cols = rows[0][:4] 
-            df = pd.DataFrame([r[:4] for r in rows[1:]], columns=cols)
+            # Csak az első 6 oszlopot használjuk biztos ami biztos (Hogy látszódjon a Mód is)
+            cols = rows[0][:6] 
+            # Ha esetleg a fejléc rövidebb, kitöltjük üressel
+            while len(cols) < 6:
+                cols.append(f"Oszlop {len(cols)+1}")
+                
+            df_data = []
+            for r in rows[1:]:
+                # Kipótoljuk üressel, ha a sor rövidebb mint 6 elem
+                padded_row = r[:6] + [""] * (6 - len(r[:6]))
+                df_data.append(padded_row)
+                
+            df = pd.DataFrame(df_data, columns=cols)
             
             # Rendezési opciók
             col_sort, col_order = st.columns([2, 1])
@@ -334,13 +380,26 @@ gs_client = get_gsheet_connection()
 fs_db = get_firestore_db()
 
 # State inicializálás
+if 'app_mode' not in st.session_state: st.session_state.app_mode = None
 if 'admin_step' not in st.session_state: reset_admin_form()
 if 'admin_date' not in st.session_state: st.session_state.admin_date = generate_tuesday_dates()[0]
 
-# Leegyszerűsített menü
-page = st.sidebar.radio("Menü", ["Admin Regisztráció", "Adatbázis"])
+# --- FŐ LOGIKA (KEZDŐKÉPERNYŐ VAGY APP) ---
+if st.session_state.app_mode is None:
+    # Ha nincs kiválasztva mód, mutatjuk a kezdőképernyőt
+    render_landing_page()
+else:
+    # Ha már van mód, mutatjuk az applikációt és a menüt
+    st.sidebar.markdown(f"**Üzemmód:** {'🟢 Valós' if st.session_state.app_mode == 'valós' else '🧪 Teszt'}")
+    if st.sidebar.button("Kijelentkezés / Módváltás"):
+        st.session_state.app_mode = None
+        reset_admin_form()
+        st.rerun()
+        
+    st.sidebar.markdown("---")
+    page = st.sidebar.radio("Menü", ["Admin Regisztráció", "Adatbázis"])
 
-if page == "Admin Regisztráció": 
-    render_admin_page(gs_client, fs_db)
-elif page == "Adatbázis": 
-    render_database_page(gs_client)
+    if page == "Admin Regisztráció": 
+        render_admin_page(gs_client, fs_db)
+    elif page == "Adatbázis": 
+        render_database_page(gs_client)
