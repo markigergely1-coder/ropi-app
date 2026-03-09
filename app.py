@@ -90,10 +90,15 @@ def get_firestore_db():
                 if "\\n" in pk: pk = pk.replace("\\n", "\n")
                 creds_dict["private_key"] = pk
             creds = service_account.Credentials.from_service_account_info(creds_dict)
-            return firestore.Client(credentials=creds)
+            # Kifejezetten megadjuk a projekt ID-t a biztonság kedvéért
+            return firestore.Client(credentials=creds, project=creds_dict.get("project_id"))
         elif os.path.exists(CREDENTIALS_FILE):
-            return firestore.Client.from_service_account_json(CREDENTIALS_FILE)
-    except: return None
+            with open(CREDENTIALS_FILE, 'r') as f:
+                creds_dict = json.load(f)
+            return firestore.Client.from_service_account_json(CREDENTIALS_FILE, project=creds_dict.get("project_id"))
+    except Exception as e: 
+        st.error(f"Firestore indítási hiba: {e}")
+        return None
     return None
 
 # --- 3. SEGÉDFÜGGVÉNYEK ---
@@ -111,6 +116,8 @@ def generate_tuesday_dates(past_count=8, future_count=2):
 
 def save_all_data(gs_client, fs_client, rows):
     success_gs = False
+    success_fs = False
+    error_msg_fs = ""
     
     # 1. Mentés Google Sheets-be (Kötelező egyelőre)
     if gs_client:
@@ -121,7 +128,7 @@ def save_all_data(gs_client, fs_client, rows):
         except Exception as e:
             return False, f"Hiba a Google Sheet mentésekor: {e}"
 
-    # 2. Mentés Firestore-ba (Opcionális most, de a jövőben ez lesz a fő)
+    # 2. Mentés Firestore-ba 
     if fs_client:
         try:
             for r in rows:
@@ -133,12 +140,22 @@ def save_all_data(gs_client, fs_client, rows):
                     "event_date": r[3],
                     "mode": r[5] if len(r) > 5 else "ismeretlen"
                 })
-        except: 
-            pass
+            success_fs = True
+        except Exception as e: 
+            error_msg_fs = str(e)
+    else:
+        error_msg_fs = "Nincs aktív Firestore kapcsolat."
             
     st.cache_data.clear()
-    if success_gs: return True, "Sikeres mentés a Google Sheet-be!"
-    else: return False, "Sikertelen mentés."
+    
+    # Értékeljük ki a sikert, hogy a felhasználó pontosan tudja, mi történt
+    if success_gs and success_fs: 
+        return True, "Sikeres mentés a Google Sheet-be és a Firestore-ba is! ✅☁️"
+    elif success_gs and not success_fs: 
+        # Most már látni fogod ezt a hibaüzenetet, ha valamiért nem ment a felhőbe!
+        return True, f"Mentve a Sheet-be, de a Firestore HIBA miatt nem mentette a felhőbe: {error_msg_fs} ⚠️"
+    else: 
+        return False, "Kritikus hiba, egyik adatbázis sem érhető el."
 
 @st.cache_data(ttl=300)
 def get_attendance_rows_gs(_client):
@@ -163,7 +180,8 @@ def get_attendance_rows_fs(_db):
                 d.get("mode", "ismeretlen")
             ])
         return pd.DataFrame(data, columns=["Név", "Jön-e", "Regisztráció Időpontja", "Alkalom Dátuma", "Mód"])
-    except: 
+    except Exception as e: 
+        st.error(f"Hiba a Firestore adatok betöltésekor: {e}")
         return pd.DataFrame()
 
 def get_historical_guests_list(rows, main_name):
@@ -461,10 +479,13 @@ def render_admin_page(gs_client, fs_client):
                 if success:
                     st.success(msg)
                     reset_admin_form()
-                    time.sleep(2)
+                    time.sleep(3)
                     st.rerun()
                 else: 
-                    st.error(msg)
+                    st.warning(msg) # A részleges hibát is itt jelezzük ki!
+                    time.sleep(4)
+                    reset_admin_form()
+                    st.rerun()
             except Exception as e: 
                 st.error(f"Hiba: {e}")
                 
@@ -578,7 +599,7 @@ def render_database_page(gs_client, fs_db):
             df_fs = df_fs.sort_values(by=sort_col_fs, ascending=ascending_fs)
             st.dataframe(df_fs, use_container_width=True)
         else:
-            st.info("Még nincsenek adatok a Firestore adatbázisban, vagy nem sikerült csatlakozni.")
+            st.info("Még nincsenek adatok a Firestore adatbázisban, vagy a csatlakozás sikertelen volt.")
 
     with tab3:
         st.subheader("Részvételi Ranglista")
@@ -673,7 +694,6 @@ else:
         st.rerun()
         
     st.sidebar.markdown("---")
-    # Kibővített menü az új füllel
     page = st.sidebar.radio("Menü", ["Admin Regisztráció", "Alkalmak Áttekintése", "Adatbázis", "Havi Elszámolás"])
 
     if page == "Admin Regisztráció": 
@@ -681,7 +701,6 @@ else:
     elif page == "Alkalmak Áttekintése":
         render_attendance_overview_page(gs_client)
     elif page == "Adatbázis": 
-        # Most már a Firestore adatbázist is átadjuk
         render_database_page(gs_client, fs_db)
     elif page == "Havi Elszámolás":
         render_accounting_page(gs_client)
