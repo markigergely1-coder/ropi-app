@@ -190,8 +190,9 @@ def get_historical_guests_list(rows, main_name):
     return sorted(list(guests))
 
 def parse_hungarian_date(date_str):
-    if not date_str: return None
+    if not date_str or pd.isna(date_str): return None
     clean_str = str(date_str).strip()
+    if clean_str.lower() in ['nan', 'none', '']: return None
     if clean_str.endswith('.'): clean_str = clean_str[:-1]
     clean_str = clean_str.replace('. ', '-').replace('.', '-')
     try: return datetime.strptime(clean_str.split(" ")[0], "%Y-%m-%d").date()
@@ -264,10 +265,9 @@ def get_invoices_info(_client):
         
     return list(reversed(invoices))
 
-def calculate_monthly_accounting(gs_client, inv_dict):
+def calculate_monthly_accounting(gs_client, fs_db, inv_dict):
     try:
         ss = gs_client.open(GSHEET_NAME)
-        att_sheet = ss.sheet1 
         try: beallitasok_sheet = ss.worksheet("Beállítások")
         except: beallitasok_sheet = ss.worksheet("Beallitasok")
     except Exception as e:
@@ -291,22 +291,26 @@ def calculate_monthly_accounting(gs_client, inv_dict):
 
     cost_per_session = total_amount / len(session_dates)
 
-    att_data = att_sheet.get_all_values()
+    # --- FIRESTORE ADATOK HASZNÁLATA AZ ELSZÁMOLÁSHOZ ---
+    df_fs = get_attendance_rows_fs(fs_db)
     processed_att = []
-    for row in att_data[1:]:
-        if len(row) < 2: continue
-        name, is_coming = row[0].strip(), row[1].strip()
-        if not name or not is_coming: continue
-        
-        reg_val = row[2] if len(row) > 2 else ""
-        evt_val = row[3] if len(row) > 3 else ""
-        
-        mode_val = row[5].strip().lower() if len(row) > 5 else "valós"
-        if mode_val == "teszt": continue
+    
+    if not df_fs.empty:
+        for _, row in df_fs.iterrows():
+            name = str(row["Név"]).strip() if pd.notna(row["Név"]) else ""
+            is_coming = str(row["Jön-e"]).strip() if pd.notna(row["Jön-e"]) else ""
+            
+            if not name or not is_coming: continue
+            
+            reg_val = str(row["Regisztráció Időpontja"]) if pd.notna(row["Regisztráció Időpontja"]) else ""
+            evt_val = str(row["Alkalom Dátuma"]) if pd.notna(row["Alkalom Dátuma"]) else ""
+            
+            mode_val = str(row["Mód"]).strip().lower() if pd.notna(row["Mód"]) else "valós"
+            if mode_val == "teszt": continue
 
-        rel_date = parse_hungarian_date(evt_val) or parse_hungarian_date(reg_val)
-        if rel_date:
-            processed_att.append({"name": name, "is_coming": is_coming, "date": rel_date})
+            rel_date = parse_hungarian_date(evt_val) or parse_hungarian_date(reg_val)
+            if rel_date:
+                processed_att.append({"name": name, "is_coming": is_coming, "date": rel_date})
 
     elszamolas_data = []
     person_totals = {}
@@ -489,9 +493,9 @@ def render_admin_page(gs_client, fs_client):
             st.rerun()
 
 # --- ALKALMAK ÁTTEKINTÉSE ---
-def render_attendance_overview_page(client):
+def render_attendance_overview_page(fs_db):
     st.title("📅 Alkalmak Áttekintése")
-    st.markdown("Itt ellenőrizheted a résztvevők számát és névsorát az elmúlt 8 alkalomra visszamenőleg.")
+    st.markdown("Itt ellenőrizheted a résztvevők számát és névsorát az elmúlt 8 alkalomra visszamenőleg. *(Az adatok a Firestore felhőből származnak)*")
 
     dates = generate_tuesday_dates(past_count=8, future_count=0)
     selected_date_str = st.selectbox("Válassz egy dátumot az áttekintéshez:", dates)
@@ -499,27 +503,26 @@ def render_attendance_overview_page(client):
     if selected_date_str:
         selected_date = parse_hungarian_date(selected_date_str)
         
-        with st.spinner("Adatok betöltése..."):
-            rows = get_attendance_rows_gs(client)
+        with st.spinner("Adatok betöltése a Firestore-ból..."):
+            df_fs = get_attendance_rows_fs(fs_db)
         
-        if not rows:
-            st.warning("Nem sikerült betölteni a Google Sheets adatokat.")
+        if df_fs.empty:
+            st.warning("Nem sikerült betölteni a Firestore adatokat.")
             return
 
         yes_set = set()
         no_set = set()
 
-        for row in rows[1:]:
-            if len(row) < 2: continue
-            name = row[0].strip()
-            is_coming = row[1].strip()
+        for _, row in df_fs.iterrows():
+            name = str(row["Név"]).strip() if pd.notna(row["Név"]) else ""
+            is_coming = str(row["Jön-e"]).strip() if pd.notna(row["Jön-e"]) else ""
             
             if not name: continue
             
-            reg_val = row[2] if len(row) > 2 else ""
-            evt_val = row[3] if len(row) > 3 else ""
+            reg_val = str(row["Regisztráció Időpontja"]) if pd.notna(row["Regisztráció Időpontja"]) else ""
+            evt_val = str(row["Alkalom Dátuma"]) if pd.notna(row["Alkalom Dátuma"]) else ""
             
-            mode_val = row[5].strip().lower() if len(row) > 5 else "valós"
+            mode_val = str(row["Mód"]).strip().lower() if pd.notna(row["Mód"]) else "valós"
             if mode_val == "teszt": continue
 
             rel_date = parse_hungarian_date(evt_val) or parse_hungarian_date(reg_val)
@@ -705,11 +708,11 @@ def render_database_page(gs_client, fs_db):
         else:
             st.warning("Nem sikerült betölteni a Google Sheets adatokat a ranglistához.")
 
-def render_accounting_page(client):
+def render_accounting_page(gs_client, fs_db):
     st.title("💰 Havi Elszámolás")
-    st.markdown("Ezzel a funkcióval kiszámolhatod a teremköltségek személyenkénti elosztását a valós jelenléti adatok alapján.")
+    st.markdown("Ezzel a funkcióval kiszámolhatod a teremköltségek személyenkénti elosztását a valós jelenléti adatok alapján. *(A jelenlétet a Firestore-ból olvassa)*")
     
-    invoices = get_invoices_info(client)
+    invoices = get_invoices_info(gs_client)
     
     if not invoices:
         st.warning("Nem találtam érvényes számlát a 'Szamlak' lapon. Kérlek ellenőrizd az adatokat!")
@@ -723,7 +726,7 @@ def render_accounting_page(client):
     
     if st.button("Elszámolás Kalkulálása 🚀", type="primary"):
         with st.spinner(f"Adatok beolvasása és {selected_inv['target_year']}. {selected_inv['month_name']} havi elszámolás számítása..."):
-            success, msg, df_elszamolas, df_osszesito, month_name, year = calculate_monthly_accounting(client, selected_inv)
+            success, msg, df_elszamolas, df_osszesito, month_name, year = calculate_monthly_accounting(gs_client, fs_db, selected_inv)
             
         if success:
             st.success(f"✅ Kalkuláció sikeres: {year}. {month_name}")
@@ -787,8 +790,8 @@ else:
     if page == "Admin Regisztráció": 
         render_admin_page(gs_client, fs_db)
     elif page == "Alkalmak Áttekintése":
-        render_attendance_overview_page(gs_client)
+        render_attendance_overview_page(fs_db) # MOST MÁR CSAK FS ADATBÁZIST KAP
     elif page == "Adatbázis": 
         render_database_page(gs_client, fs_db)
     elif page == "Havi Elszámolás":
-        render_accounting_page(gs_client)
+        render_accounting_page(gs_client, fs_db) # GS_CLIENT a beállításokhoz/számlákhoz, FS a jelenléthez
