@@ -188,42 +188,65 @@ def build_total_attendance(rows, year=None):
 
 # --- 4. ELSZÁMOLÁSI LOGIKA ---
 
-def calculate_monthly_accounting(gs_client):
+@st.cache_data(ttl=60)
+def get_invoices_info(_client):
+    """Lekéri a számlákat a Google Sheetből a kiválasztó listához."""
+    if _client is None: return []
     try:
-        ss = gs_client.open(GSHEET_NAME)
+        ss = _client.open(GSHEET_NAME)
         try: szamlak_sheet = ss.worksheet("Szamlak")
         except: szamlak_sheet = ss.worksheet("szamlak")
+        rows = szamlak_sheet.get_all_values()
+    except:
+        return []
+    
+    if len(rows) < 2: return []
+    
+    month_names = ["Január", "Február", "Március", "Április", "Május", "Június", "Július", "Augusztus", "Szeptember", "Október", "November", "December"]
+    invoices = []
+    
+    for row in rows[1:]:
+        if not row[0]: continue
+        inv_date = parse_hungarian_date(row[0])
+        if not inv_date: continue
+        
+        try:
+            amount = float(str(row[1]).replace(' ', '').replace('Ft', '').replace('HUF', '').replace('\xa0', ''))
+        except:
+            continue
+        
+        # A számla mindig az előző hónapra vonatkozik
+        if inv_date.month == 1:
+            t_month = 12
+            t_year = inv_date.year - 1
+        else:
+            t_month = inv_date.month - 1
+            t_year = inv_date.year
+            
+        invoices.append({
+            "inv_date": inv_date.strftime("%Y-%m-%d"),
+            "target_year": t_year,
+            "target_month": t_month,
+            "month_name": month_names[t_month - 1],
+            "amount": amount
+        })
+        
+    # Megfordítjuk a listát, hogy a legújabb számla legyen legfelül
+    return list(reversed(invoices))
+
+def calculate_monthly_accounting(gs_client, inv_dict):
+    try:
+        ss = gs_client.open(GSHEET_NAME)
         att_sheet = ss.sheet1 
         try: beallitasok_sheet = ss.worksheet("Beállítások")
         except: beallitasok_sheet = ss.worksheet("Beallitasok")
     except Exception as e:
         return False, f"Hiba a munkalapok beolvasásakor: {e}", None, None, None, None
 
-    szamla_data = szamlak_sheet.get_all_values()
-    if len(szamla_data) < 2: 
-        return False, "Nincs elég adat a Szamlak lapon.", None, None, None, None
-    last_invoice = szamla_data[-1]
-    if not last_invoice[0]: 
-        return False, "Az utolsó számla dátuma üres.", None, None, None, None
-
-    inv_date = parse_hungarian_date(last_invoice[0])
-    if not inv_date: 
-        return False, "Érvénytelen számla dátum formátum.", None, None, None, None
-
-    try:
-        total_amount = float(str(last_invoice[1]).replace(' ', '').replace('Ft', '').replace('HUF', '').replace('\xa0', ''))
-    except:
-        return False, "A számla összege nem olvasható számként.", None, None, None, None
-
-    if inv_date.month == 1:
-        target_month = 12
-        target_year = inv_date.year - 1
-    else:
-        target_month = inv_date.month - 1
-        target_year = inv_date.year
-
-    month_names = ["Január", "Február", "Március", "Április", "Május", "Június", "Július", "Augusztus", "Szeptember", "Október", "November", "December"]
-    target_month_name = month_names[target_month - 1]
+    target_year = inv_dict["target_year"]
+    target_month = inv_dict["target_month"]
+    target_month_name = inv_dict["month_name"]
+    total_amount = inv_dict["amount"]
 
     beallitasok_data = beallitasok_sheet.get_all_values()
     session_dates = []
@@ -234,7 +257,7 @@ def calculate_monthly_accounting(gs_client):
                 session_dates.append(d)
 
     if not session_dates:
-        return False, f"Nincsenek alkalmak rögzítve {target_year}. {target_month_name} hónapra.", None, None, None, None
+        return False, f"Nincsenek alkalmak rögzítve a 'Beállítások' lapon {target_year}. {target_month_name} hónapra.", None, None, None, None
 
     cost_per_session = total_amount / len(session_dates)
 
@@ -486,11 +509,23 @@ def render_database_page(client):
 
 def render_accounting_page(client):
     st.title("💰 Havi Elszámolás")
-    st.markdown("Ezzel a funkcióval kiszámolhatod az **előző havi** teremköltségek személyenkénti elosztását a valós jelenléti adatok alapján (a teszt adatok kihagyásával).")
+    st.markdown("Ezzel a funkcióval kiszámolhatod a teremköltségek személyenkénti elosztását a valós jelenléti adatok alapján.")
+    
+    invoices = get_invoices_info(client)
+    
+    if not invoices:
+        st.warning("Nem találtam érvényes számlát a 'Szamlak' lapon. Kérlek ellenőrizd az adatokat!")
+        return
+        
+    selected_inv = st.selectbox(
+        "Válaszd ki az elszámolandó hónapot (a számlák alapján):", 
+        invoices, 
+        format_func=lambda x: f"{x['target_year']}. {x['month_name']} (Számla dátuma: {x['inv_date']} | Összeg: {x['amount']:,.0f} Ft)".replace(',', ' ')
+    )
     
     if st.button("Elszámolás Kalkulálása 🚀", type="primary"):
-        with st.spinner("Adatok beolvasása és számolás folyamatban..."):
-            success, msg, df_elszamolas, df_osszesito, month_name, year = calculate_monthly_accounting(client)
+        with st.spinner(f"Adatok beolvasása és {selected_inv['target_year']}. {selected_inv['month_name']} havi elszámolás számítása..."):
+            success, msg, df_elszamolas, df_osszesito, month_name, year = calculate_monthly_accounting(client, selected_inv)
             
         if success:
             st.success(f"✅ Kalkuláció sikeres: {year}. {month_name}")
