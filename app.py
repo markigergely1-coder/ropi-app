@@ -112,7 +112,7 @@ def generate_tuesday_dates(past_count=8, future_count=2):
 def save_all_data(gs_client, fs_client, rows):
     success_gs = False
     
-    # 1. Mentés Google Sheets-be (Kötelező)
+    # 1. Mentés Google Sheets-be (Kötelező egyelőre)
     if gs_client:
         try:
             sheet = gs_client.open(GSHEET_NAME).sheet1
@@ -121,7 +121,7 @@ def save_all_data(gs_client, fs_client, rows):
         except Exception as e:
             return False, f"Hiba a Google Sheet mentésekor: {e}"
 
-    # 2. Mentés Firestore-ba (Opcionális)
+    # 2. Mentés Firestore-ba (Opcionális most, de a jövőben ez lesz a fő)
     if fs_client:
         try:
             for r in rows:
@@ -145,6 +145,26 @@ def get_attendance_rows_gs(_client):
     if _client is None: return []
     try: return _client.open(GSHEET_NAME).sheet1.get_all_values()
     except: return []
+
+@st.cache_data(ttl=60)
+def get_attendance_rows_fs(_db):
+    """Lekéri a Firestore adatokat és DataFrame-be teszi."""
+    if _db is None: return pd.DataFrame()
+    try:
+        docs = _db.collection(FIRESTORE_COLLECTION).order_by("timestamp", direction=firestore.Query.DESCENDING).stream()
+        data = []
+        for doc in docs:
+            d = doc.to_dict()
+            data.append([
+                d.get("name"), 
+                d.get("status"), 
+                d.get("timestamp"), 
+                d.get("event_date"), 
+                d.get("mode", "ismeretlen")
+            ])
+        return pd.DataFrame(data, columns=["Név", "Jön-e", "Regisztráció Időpontja", "Alkalom Dátuma", "Mód"])
+    except: 
+        return pd.DataFrame()
 
 def get_historical_guests_list(rows, main_name):
     if not rows: return []
@@ -452,14 +472,12 @@ def render_admin_page(gs_client, fs_client):
             st.session_state.admin_step = 2
             st.rerun()
 
-# --- ÚJ: ALKALMAK ÁTTEKINTÉSE ---
+# --- ALKALMAK ÁTTEKINTÉSE ---
 def render_attendance_overview_page(client):
     st.title("📅 Alkalmak Áttekintése")
     st.markdown("Itt ellenőrizheted a résztvevők számát és névsorát az elmúlt 8 alkalomra visszamenőleg.")
 
-    # Pontosan 8 visszamenőleges dátum (jövőbeliek nélkül)
     dates = generate_tuesday_dates(past_count=8, future_count=0)
-    
     selected_date_str = st.selectbox("Válassz egy dátumot az áttekintéshez:", dates)
 
     if selected_date_str:
@@ -485,7 +503,6 @@ def render_attendance_overview_page(client):
             reg_val = row[2] if len(row) > 2 else ""
             evt_val = row[3] if len(row) > 3 else ""
             
-            # Teszt adatok kihagyása a listázásból
             mode_val = row[5].strip().lower() if len(row) > 5 else "valós"
             if mode_val == "teszt": continue
 
@@ -495,7 +512,6 @@ def render_attendance_overview_page(client):
                 if is_coming == "Yes": yes_set.add(name)
                 elif is_coming == "No": no_set.add(name)
 
-        # Végső résztvevők (akik Igen-t mondtak, és utána nem mondták le)
         final_attendees = sorted(list(yes_set - no_set))
         count = len(final_attendees)
         
@@ -508,7 +524,6 @@ def render_attendance_overview_page(client):
         with col2:
             if count > 0:
                 st.subheader("Résztvevők névsora:")
-                # Két oszlop a nevek szebb megjelenítéséhez
                 name_cols = st.columns(2)
                 for i, name in enumerate(final_attendees):
                     name_cols[i % 2].markdown(f"✅ **{name}**")
@@ -516,14 +531,15 @@ def render_attendance_overview_page(client):
                 st.info("Erre az alkalomra nincs érvényes regisztráció.")
 
 
-def render_database_page(client):
+def render_database_page(gs_client, fs_db):
     st.title("🗂️ Adatbázis")
     
-    tab1, tab2 = st.tabs(["📝 Beküldött Adatok", "🏆 Ranglista"])
+    # Kiegészítve a Firestore (Felhő) füllel
+    tab1, tab2, tab3 = st.tabs(["📝 Beküldött Adatok (Sheet)", "☁️ Felhő Adatok (Firestore)", "🏆 Ranglista"])
     
     with tab1:
         st.subheader("Google Sheet adatok megtekintése")
-        rows = get_attendance_rows_gs(client)
+        rows = get_attendance_rows_gs(gs_client)
         if rows:
             cols = rows[0][:6] 
             while len(cols) < 6:
@@ -538,9 +554,9 @@ def render_database_page(client):
             
             col_sort, col_order = st.columns([2, 1])
             with col_sort:
-                sort_col = st.selectbox("Rendezés alapja:", df.columns, index=2)
+                sort_col = st.selectbox("Rendezés alapja:", df.columns, index=2, key="sort1")
             with col_order:
-                ascending = st.checkbox("Növekvő sorrend (legrégebbi felül)", value=False)
+                ascending = st.checkbox("Növekvő sorrend (legrégebbi felül)", value=False, key="asc1")
             
             df = df.sort_values(by=sort_col, ascending=ascending)
             st.dataframe(df, use_container_width=True)
@@ -548,8 +564,25 @@ def render_database_page(client):
             st.warning("Nem sikerült betölteni a Google Sheets adatokat.")
 
     with tab2:
+        st.subheader("Firestore Adatbázis megtekintése")
+        st.markdown("Ide kerülnek lementésre azok az adatok is, amiket a tesztelés kedvéért a jövőbeni Sheet mentes működéshez gyűjtünk.")
+        df_fs = get_attendance_rows_fs(fs_db)
+        
+        if not df_fs.empty:
+            col_sort_fs, col_order_fs = st.columns([2, 1])
+            with col_sort_fs:
+                sort_col_fs = st.selectbox("Rendezés alapja:", df_fs.columns, index=2, key="sort2")
+            with col_order_fs:
+                ascending_fs = st.checkbox("Növekvő sorrend (legrégebbi felül)", value=False, key="asc2")
+                
+            df_fs = df_fs.sort_values(by=sort_col_fs, ascending=ascending_fs)
+            st.dataframe(df_fs, use_container_width=True)
+        else:
+            st.info("Még nincsenek adatok a Firestore adatbázisban, vagy nem sikerült csatlakozni.")
+
+    with tab3:
         st.subheader("Részvételi Ranglista")
-        rows = get_attendance_rows_gs(client)
+        rows = get_attendance_rows_gs(gs_client)
         if rows:
             v = st.selectbox("Év kiválasztása:", ["All time", "2024", "2025"])
             totals = build_total_attendance(rows, int(v) if v != "All time" else None)
@@ -648,6 +681,7 @@ else:
     elif page == "Alkalmak Áttekintése":
         render_attendance_overview_page(gs_client)
     elif page == "Adatbázis": 
-        render_database_page(gs_client)
+        # Most már a Firestore adatbázist is átadjuk
+        render_database_page(gs_client, fs_db)
     elif page == "Havi Elszámolás":
         render_accounting_page(gs_client)
