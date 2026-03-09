@@ -9,6 +9,7 @@ import json
 import pytz 
 import pandas as pd
 import time
+from fpdf import FPDF
 
 # --- 1. CONFIG ---
 st.set_page_config(page_title="Röpi App Pro", layout="wide", page_icon="🏐")
@@ -120,7 +121,7 @@ def save_all_data(gs_client, fs_client, rows):
         except Exception as e:
             return False, f"Hiba a Google Sheet mentésekor: {e}"
 
-    # 2. Mentés Firestore-ba (Opcionális - ha működik, jó)
+    # 2. Mentés Firestore-ba (Opcionális)
     if fs_client:
         try:
             for r in rows:
@@ -133,15 +134,11 @@ def save_all_data(gs_client, fs_client, rows):
                     "mode": r[5] if len(r) > 5 else "ismeretlen"
                 })
         except: 
-            # Ha a Firestore hibára fut, nem omlik össze, megy tovább
             pass
             
     st.cache_data.clear()
-    
-    if success_gs:
-        return True, "Sikeres mentés a Google Sheet-be!"
-    else:
-        return False, "Sikertelen mentés."
+    if success_gs: return True, "Sikeres mentés a Google Sheet-be!"
+    else: return False, "Sikertelen mentés."
 
 @st.cache_data(ttl=300)
 def get_attendance_rows_gs(_client):
@@ -159,11 +156,15 @@ def get_historical_guests_list(rows, main_name):
             if guest_part: guests.add(guest_part)
     return sorted(list(guests))
 
-def parse_attendance_date(reg_val, evt_val):
-    d = evt_val or reg_val
-    if not d: return None
-    try: return datetime.strptime(d.split(" ")[0], "%Y-%m-%d").date()
-    except: return None
+def parse_hungarian_date(date_str):
+    if not date_str: return None
+    clean_str = str(date_str).strip()
+    if clean_str.endswith('.'): clean_str = clean_str[:-1]
+    clean_str = clean_str.replace('. ', '-').replace('.', '-')
+    try: return datetime.strptime(clean_str.split(" ")[0], "%Y-%m-%d").date()
+    except ValueError:
+        try: return datetime.strptime(clean_str, "%Y-%m-%d %H:%M:%S").date()
+        except: return None
 
 def build_total_attendance(rows, year=None):
     status_by_name_date = {}
@@ -173,7 +174,7 @@ def build_total_attendance(rows, year=None):
         reg = row[2].strip() if len(row) > 2 else ""
         evt = row[3].strip() if len(row) > 3 else ""
         if not name or response not in {"Yes", "No"}: continue
-        record_date = parse_attendance_date(reg, evt)
+        record_date = parse_hungarian_date(evt) or parse_hungarian_date(reg)
         if record_date is None: continue
         if year is not None and record_date.year != year: continue
         key = (name, record_date)
@@ -185,7 +186,143 @@ def build_total_attendance(rows, year=None):
         if status["yes"] and not status["no"]: totals[name] = totals.get(name, 0) + 1
     return totals
 
-# --- MEGJELENÍTÉS ---
+# --- 4. ELSZÁMOLÁSI LOGIKA ---
+
+def calculate_monthly_accounting(gs_client):
+    try:
+        ss = gs_client.open(GSHEET_NAME)
+        try: szamlak_sheet = ss.worksheet("Szamlak")
+        except: szamlak_sheet = ss.worksheet("szamlak")
+        att_sheet = ss.sheet1 
+        try: beallitasok_sheet = ss.worksheet("Beállítások")
+        except: beallitasok_sheet = ss.worksheet("Beallitasok")
+    except Exception as e:
+        return False, f"Hiba a munkalapok beolvasásakor: {e}", None, None, None, None
+
+    szamla_data = szamlak_sheet.get_all_values()
+    if len(szamla_data) < 2: 
+        return False, "Nincs elég adat a Szamlak lapon.", None, None, None, None
+    last_invoice = szamla_data[-1]
+    if not last_invoice[0]: 
+        return False, "Az utolsó számla dátuma üres.", None, None, None, None
+
+    inv_date = parse_hungarian_date(last_invoice[0])
+    if not inv_date: 
+        return False, "Érvénytelen számla dátum formátum.", None, None, None, None
+
+    try:
+        total_amount = float(str(last_invoice[1]).replace(' ', '').replace('Ft', '').replace('HUF', '').replace('\xa0', ''))
+    except:
+        return False, "A számla összege nem olvasható számként.", None, None, None, None
+
+    if inv_date.month == 1:
+        target_month = 12
+        target_year = inv_date.year - 1
+    else:
+        target_month = inv_date.month - 1
+        target_year = inv_date.year
+
+    month_names = ["Január", "Február", "Március", "Április", "Május", "Június", "Július", "Augusztus", "Szeptember", "Október", "November", "December"]
+    target_month_name = month_names[target_month - 1]
+
+    beallitasok_data = beallitasok_sheet.get_all_values()
+    session_dates = []
+    for row in beallitasok_data:
+        if row and row[0]:
+            d = parse_hungarian_date(row[0])
+            if d and d.month == target_month and d.year == target_year:
+                session_dates.append(d)
+
+    if not session_dates:
+        return False, f"Nincsenek alkalmak rögzítve {target_year}. {target_month_name} hónapra.", None, None, None, None
+
+    cost_per_session = total_amount / len(session_dates)
+
+    att_data = att_sheet.get_all_values()
+    processed_att = []
+    for row in att_data[1:]:
+        if len(row) < 2: continue
+        name, is_coming = row[0].strip(), row[1].strip()
+        if not name or not is_coming: continue
+        
+        reg_val = row[2] if len(row) > 2 else ""
+        evt_val = row[3] if len(row) > 3 else ""
+        
+        # Kihagyjuk a teszt adatokat a kalkulációból
+        mode_val = row[5].strip().lower() if len(row) > 5 else "valós"
+        if mode_val == "teszt": continue
+
+        rel_date = parse_hungarian_date(evt_val) or parse_hungarian_date(reg_val)
+        if rel_date:
+            processed_att.append({"name": name, "is_coming": is_coming, "date": rel_date})
+
+    elszamolas_data = []
+    person_totals = {}
+    person_counts = {}
+
+    for s_date in session_dates:
+        yes_set = set()
+        no_set = set()
+        for rec in processed_att:
+            if rec["date"] == s_date:
+                if rec["is_coming"] == "Yes": yes_set.add(rec["name"])
+                elif rec["is_coming"] == "No": no_set.add(rec["name"])
+
+        final_attendees = yes_set - no_set
+        attendee_count = len(final_attendees)
+        cost_per_person = cost_per_session / attendee_count if attendee_count > 0 else 0
+
+        elszamolas_data.append({
+            "Dátum": s_date.strftime("%Y-%m-%d"),
+            "Költség / alkalom": f"{cost_per_session:.0f} Ft",
+            "Létszám": f"{attendee_count} fő",
+            "Költség / Fő": f"{cost_per_person:.0f} Ft"
+        })
+
+        for att_name in final_attendees:
+            person_totals[att_name] = person_totals.get(att_name, 0) + cost_per_person
+            person_counts[att_name] = person_counts.get(att_name, 0) + 1
+
+    osszesito_data = []
+    for n in sorted(person_totals.keys()):
+        osszesito_data.append({
+            "Név": n,
+            "Részvétel száma": person_counts[n],
+            "Fizetendő (Ft)": person_totals[n]
+        })
+
+    df_elszamolas = pd.DataFrame(elszamolas_data)
+    df_osszesito = pd.DataFrame(osszesito_data)
+
+    return True, "Siker", df_elszamolas, df_osszesito, target_month_name, target_year
+
+def generate_pdf_bytes(df_osszesito, month_name, year):
+    pdf = FPDF()
+    pdf.add_page()
+    
+    def safe_txt(t):
+        return str(t).translate(str.maketrans('őűóúöüíáéŐŰÓÚÖÜÍÁÉ', 'ouououiaeOUOUOUIAE')).encode('latin-1', 'replace').decode('latin-1')
+
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, txt=safe_txt(f"Havi Roplabda Elszamolas - {year}. {month_name}"), ln=True, align='C')
+    pdf.ln(10)
+    
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(90, 10, safe_txt("Nev"), border=1)
+    pdf.cell(40, 10, safe_txt("Reszvetel szama"), border=1, align='C')
+    pdf.cell(50, 10, safe_txt("Fizetendo"), border=1, align='R')
+    pdf.ln()
+    
+    pdf.set_font("Arial", "", 12)
+    for _, row in df_osszesito.iterrows():
+        pdf.cell(90, 10, safe_txt(row['Név']), border=1)
+        pdf.cell(40, 10, str(row['Részvétel száma']), border=1, align='C')
+        pdf.cell(50, 10, safe_txt(f"{row['Fizetendő (Ft)']:.0f} Ft"), border=1, align='R')
+        pdf.ln()
+        
+    return pdf.output(dest='S').encode('latin-1')
+
+# --- MEGJELENÍTÉS (UI) ---
 
 def render_landing_page():
     st.markdown("<h1 style='text-align: center; margin-bottom: 30px;'>🏐 Röpi App</h1>", unsafe_allow_html=True)
@@ -199,14 +336,13 @@ def render_landing_page():
             st.rerun()
             
     with col3:
-        if st.button("🧪 Teszt\n\n(Kipróbálás)", use_container_width=True):
+        if st.button("🧪 Teszt\n\n(Kipróbálás mentése)", use_container_width=True):
             st.session_state.app_mode = "teszt"
             st.rerun()
 
 def render_admin_page(gs_client, fs_client):
     st.title("🛠️ Admin Regisztráció")
     
-    # Kijelző a jelenlegi üzemmódról
     if st.session_state.app_mode == "teszt":
         st.warning("⚠️ Figyelem: Jelenleg TESZT üzemmódban vagy. Az adatok 'teszt' címkével kerülnek mentésre.")
     else:
@@ -220,18 +356,16 @@ def render_admin_page(gs_client, fs_client):
         st.selectbox("Dátum kiválasztása:", dt, index=idx, key="admin_date_selector", on_change=admin_save_date)
         st.markdown("---")
         
-        # UX javítás: Bekeretezett sorok és függőleges igazítás
+        # UX JAVÍTÁS: Egy sor, bekeretezve, középre igazítva
         for name in MAIN_NAME_LIST:
             with st.container(border=True):
                 c1, c2, c3 = st.columns([2, 1, 1], vertical_alignment="center")
                 c1.markdown(f"**{name}**")
                 st.session_state.admin_attendance[name]["present"] = c2.checkbox("Jelen volt", value=st.session_state.admin_attendance[name]["present"], key=f"p_{name}")
                 st.session_state.admin_attendance[name]["guests"] = c3.selectbox(
-                    "Vendégek száma", 
-                    PLUS_PEOPLE_COUNT, 
+                    "Vendégek száma", PLUS_PEOPLE_COUNT, 
                     index=PLUS_PEOPLE_COUNT.index(st.session_state.admin_attendance[name]["guests"]), 
-                    key=f"g_{name}", 
-                    label_visibility="collapsed" # Eltüntetjük a feliratot, hogy pontosan középen maradjon
+                    key=f"g_{name}", label_visibility="collapsed"
                 )
         
         st.markdown("---")
@@ -279,7 +413,7 @@ def render_admin_page(gs_client, fs_client):
                 rows_to_add = []
                 for name, data in st.session_state.admin_attendance.items():
                     if data["present"]:
-                        # 6 elemű tömb: [Név, Státusz, Regisztráció, Dátum, Üres (E oszlop miatt), Mód (F oszlopba)]
+                        # A 6. oszlopba (F oszlop) bekerül a "valós" vagy "teszt" érték
                         rows_to_add.append([name, "Yes", ts, target_date, "", current_mode])
                         for i in range(int(data["guests"])):
                             g_name = st.session_state.admin_guest_data.get(f"admin_guest_{name}_{i}", "").strip()
@@ -304,39 +438,31 @@ def render_admin_page(gs_client, fs_client):
 def render_database_page(client):
     st.title("🗂️ Adatbázis")
     
-    # Két "fül" (Tab) létrehozása az oldalon belül
     tab1, tab2 = st.tabs(["📝 Beküldött Adatok", "🏆 Ranglista"])
     
-    # 1. Tab: Beküldött adatok táblázata (Nyers adatok)
+    # 1. Tab: Beküldött adatok
     with tab1:
         st.subheader("Google Sheet adatok megtekintése")
         rows = get_attendance_rows_gs(client)
         if rows:
-            # Csak az első 6 oszlopot használjuk biztos ami biztos (Hogy látszódjon a Mód is)
             cols = rows[0][:6] 
-            # Ha esetleg a fejléc rövidebb, kitöltjük üressel
             while len(cols) < 6:
                 cols.append(f"Oszlop {len(cols)+1}")
                 
             df_data = []
             for r in rows[1:]:
-                # Kipótoljuk üressel, ha a sor rövidebb mint 6 elem
                 padded_row = r[:6] + [""] * (6 - len(r[:6]))
                 df_data.append(padded_row)
                 
             df = pd.DataFrame(df_data, columns=cols)
             
-            # Rendezési opciók
             col_sort, col_order = st.columns([2, 1])
             with col_sort:
-                sort_col = st.selectbox("Rendezés alapja:", df.columns, index=2) # Alapból Regisztráció Időpontja
+                sort_col = st.selectbox("Rendezés alapja:", df.columns, index=2)
             with col_order:
                 ascending = st.checkbox("Növekvő sorrend (legrégebbi felül)", value=False)
             
-            # Táblázat rendezése
             df = df.sort_values(by=sort_col, ascending=ascending)
-            
-            # Táblázat kirajzolása
             st.dataframe(df, use_container_width=True)
         else:
             st.warning("Nem sikerült betölteni a Google Sheets adatokat.")
@@ -349,19 +475,47 @@ def render_database_page(client):
             v = st.selectbox("Év kiválasztása:", ["All time", "2024", "2025"])
             totals = build_total_attendance(rows, int(v) if v != "All time" else None)
             
-            # Alap adatok betöltése
             legacy = dict(LEGACY_ATTENDANCE_TOTALS) if v == "All time" else dict(YEARLY_LEGACY_TOTALS.get(int(v), {}))
-            
-            # Aktuális adatok hozzáadása
             for n, c in totals.items(): 
                 legacy[n] = legacy.get(n, 0) + c
                 
-            # Formázás és rendezés
             data = [{"Helyezés": i, "Név": n, "Összes Részvétel": c} for i, (n, c) in enumerate(sorted(legacy.items(), key=lambda x: (-x[1], x[0])), 1)]
-            
             st.dataframe(data, use_container_width=True)
         else:
             st.warning("Nem sikerült betölteni a Google Sheets adatokat a ranglistához.")
+
+def render_accounting_page(client):
+    st.title("💰 Havi Elszámolás")
+    st.markdown("Ezzel a funkcióval kiszámolhatod az **előző havi** teremköltségek személyenkénti elosztását a valós jelenléti adatok alapján (a teszt adatok kihagyásával).")
+    
+    if st.button("Elszámolás Kalkulálása 🚀", type="primary"):
+        with st.spinner("Adatok beolvasása és számolás folyamatban..."):
+            success, msg, df_elszamolas, df_osszesito, month_name, year = calculate_monthly_accounting(client)
+            
+        if success:
+            st.success(f"✅ Kalkuláció sikeres: {year}. {month_name}")
+            
+            pdf_bytes = generate_pdf_bytes(df_osszesito, month_name, year)
+            st.download_button(
+                label="📥 Elszámolás Letöltése (PDF)",
+                data=pdf_bytes,
+                file_name=f"Havi_Elszamolas_{year}_{month_name}.pdf",
+                mime="application/pdf",
+                type="primary"
+            )
+            
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Bontás Alkalmanként")
+                st.dataframe(df_elszamolas, use_container_width=True)
+            with col2:
+                st.subheader("Személyenkénti Összesítő")
+                df_display = df_osszesito.copy()
+                df_display['Fizetendő (Ft)'] = df_display['Fizetendő (Ft)'].apply(lambda x: f"{x:.0f} Ft")
+                st.dataframe(df_display, use_container_width=True)
+        else:
+            st.error(msg)
 
 # --- ADMIN HELPER FUNCTIONS ---
 def reset_admin_form(set_step=1):
@@ -386,10 +540,8 @@ if 'admin_date' not in st.session_state: st.session_state.admin_date = generate_
 
 # --- FŐ LOGIKA (KEZDŐKÉPERNYŐ VAGY APP) ---
 if st.session_state.app_mode is None:
-    # Ha nincs kiválasztva mód, mutatjuk a kezdőképernyőt
     render_landing_page()
 else:
-    # Ha már van mód, mutatjuk az applikációt és a menüt
     st.sidebar.markdown(f"**Üzemmód:** {'🟢 Valós' if st.session_state.app_mode == 'valós' else '🧪 Teszt'}")
     if st.sidebar.button("Kijelentkezés / Módváltás"):
         st.session_state.app_mode = None
@@ -397,9 +549,11 @@ else:
         st.rerun()
         
     st.sidebar.markdown("---")
-    page = st.sidebar.radio("Menü", ["Admin Regisztráció", "Adatbázis"])
+    page = st.sidebar.radio("Menü", ["Admin Regisztráció", "Adatbázis", "Havi Elszámolás"])
 
     if page == "Admin Regisztráció": 
         render_admin_page(gs_client, fs_db)
     elif page == "Adatbázis": 
         render_database_page(gs_client)
+    elif page == "Havi Elszámolás":
+        render_accounting_page(gs_client)
