@@ -357,31 +357,65 @@ def generate_pdf_bytes(df_osszesito, month_name, year):
     pdf = FPDF()
     pdf.add_page()
     
+    # --- EGYEDI BETŰTÍPUS (Ő ÉS Ű TÁMOGATÁSÁHOZ) ---
+    # A rendszer ellenőrzi, hogy feltöltöttél-e egy egyedi TTF betűtípust az app mellé.
+    has_custom_font = False
+    font_path = "Roboto-Regular.ttf"
+    font_bold_path = "Roboto-Bold.ttf"
+    
+    if os.path.exists(font_path) and os.path.exists(font_bold_path):
+        try:
+            try:
+                # A régebbi fpdf verziókhoz (uni=True paraméter szükséges a UTF-8-hoz)
+                pdf.add_font("Roboto", "", font_path, uni=True)
+                pdf.add_font("Roboto", "B", font_bold_path, uni=True)
+            except TypeError:
+                # Az újabb fpdf2 verziókhoz (nem kéri az uni=True paramétert)
+                pdf.add_font("Roboto", "", font_path)
+                pdf.add_font("Roboto", "B", font_bold_path)
+            has_custom_font = True
+        except Exception as e:
+            print(f"Betűtípus betöltési hiba: {e}")
+    
     def safe_txt(t):
         t_str = str(t)
-        # A standard Arial betűtípus (latin-1) az 'ő' és 'ű' betűket nem ismeri, 
-        # de a többi magyar ékezetet (á, é, í, ó, ö, ú, ü) gond nélkül viszi!
-        t_str = t_str.replace('ő', 'ö').replace('ű', 'ü').replace('Ő', 'Ö').replace('Ű', 'Ü')
-        return t_str.encode('latin-1', 'replace').decode('latin-1')
+        if has_custom_font:
+            # Ha van egyedi betűtípusunk, maradhat az eredeti UTF-8 (az Ő és Ű tökéletesen fog működni)
+            return t_str
+        else:
+            # Ha nincs font fájl, fallback a régi biztonságos cserére (Arial latin-1 miatt)
+            t_str = t_str.replace('ő', 'ö').replace('ű', 'ü').replace('Ő', 'Ö').replace('Ű', 'Ü')
+            return t_str.encode('latin-1', 'replace').decode('latin-1')
 
-    pdf.set_font("Arial", "B", 16)
+    # A választott betűtípus beállítása
+    font_family = "Roboto" if has_custom_font else "Arial"
+
+    pdf.set_font(font_family, "B", 16)
     pdf.cell(0, 10, txt=safe_txt(f"Havi Röplabda Elszámolás - {year}. {month_name}"), ln=True, align='C')
     pdf.ln(10)
     
-    pdf.set_font("Arial", "B", 12)
+    pdf.set_font(font_family, "B", 12)
     pdf.cell(90, 10, safe_txt("Név"), border=1)
     pdf.cell(40, 10, safe_txt("Részvétel száma"), border=1, align='C')
     pdf.cell(50, 10, safe_txt("Fizetendő"), border=1, align='R')
     pdf.ln()
     
-    pdf.set_font("Arial", "", 12)
+    pdf.set_font(font_family, "", 12)
     for _, row in df_osszesito.iterrows():
         pdf.cell(90, 10, safe_txt(row['Név']), border=1)
         pdf.cell(40, 10, str(row['Részvétel száma']), border=1, align='C')
         pdf.cell(50, 10, safe_txt(f"{row['Fizetendő (Ft)']:.0f} Ft"), border=1, align='R')
         pdf.ln()
         
-    return pdf.output(dest='S').encode('latin-1')
+    try:
+        # Régi fpdf csomag kimeneti formázása
+        return pdf.output(dest='S').encode('latin-1')
+    except TypeError:
+        # Újabb fpdf2 csomag kimeneti formázása (eleve bytokat ad vissza)
+        return pdf.output()
+    except AttributeError:
+        # Failsafe megoldás bizonyos környezetekhez
+        return bytes(pdf.output())
 
 # --- MEGJELENÍTÉS (UI) ---
 
