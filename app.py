@@ -533,7 +533,7 @@ def render_admin_page(gs_client, fs_client):
 
 def render_attendance_overview_page(fs_db):
     st.title("📅 Alkalmak Áttekintése")
-    st.markdown("Itt ellenőrizheted a résztvevők számát és névsorát az elmúlt 8 alkalomra visszamenőleg. *(Az adatok a Firestore felhőből származnak)*")
+    st.markdown("Itt ellenőrizheted a résztvevők számát és névsorát az elmúlt 8 alkalomra visszamenőleg.")
 
     dates = generate_tuesday_dates(past_count=8, future_count=0)
     selected_date_str = st.selectbox("Válassz egy dátumot az áttekintéshez:", dates)
@@ -902,7 +902,7 @@ def render_settings_page(fs_db):
 
 def render_accounting_page(fs_db):
     st.title("💰 Havi Elszámolás")
-    st.markdown("Ezzel a funkcióval kiszámolhatod a teremköltségek személyenkénti elosztását a valós jelenléti adatok alapján. *(A logika most már teljesen a Firestore felhőre támaszkodik, és automatikusan számolja a naptári keddeket!)*")
+    st.markdown("Ezzel a funkcióval kiszámolhatod a teremköltségek személyenkénti elosztását a valós jelenléti adatok alapján.")
     
     invoices = get_invoices_fs(fs_db)
     
@@ -990,3 +990,4 @@ else:
         render_accounting_page(fs_db) 
     elif page == "Beállítások (Kivételek)":
         render_settings_page(fs_db)
+
