@@ -28,7 +28,7 @@ FIRESTORE_CANCELLED = "cancelled_sessions"
 MAIN_NAME_LIST = [
     "Anna Sengler", "Annamária Földváry", "Flóra", "Boti", 
     "Csanád Laczkó", "Csenge Domokos", "Detti Szabó", "Dóri Békási", 
-    "Gergely Márki", "Márki Jancsi", "Kilyénfalvi Júlia", "Laura Piski", "Linda Antal", "Máté Lajer", "Nóri Sásdi", "Laci Márki", 
+    "Gergely Márki", "Márki Jancsi", "Nóri Sásdi", "Laci Márki", 
     "Domokos Kadosa", "Áron Szabó", "Máté Plank", "Lea Plank", "Océane Olivier"
 ]
 MAIN_NAME_LIST.sort()
@@ -990,4 +990,5 @@ else:
         render_accounting_page(fs_db) 
     elif page == "Beállítások (Kivételek)":
         render_settings_page(fs_db)
+
 
