@@ -28,7 +28,7 @@ FIRESTORE_CANCELLED = "cancelled_sessions"
 MAIN_NAME_LIST = [
     "Anna Sengler", "Annamária Földváry", "Flóra", "Boti", 
     "Csanád Laczkó", "Csenge Domokos", "Detti Szabó", "Dóri Békási", 
-    "Gergely Márki", "Márki Jancsi", "Nóri Sásdi", "Laci Márki", 
+    "Gergely Márki", "Márki Jancsi", "Kilyénfalvi Júlia", "Laura Piski", "Linda Antal", "Máté Lajer", "Nóri Sásdi", "Laci Márki", 
     "Domokos Kadosa", "Áron Szabó", "Máté Plank", "Lea Plank", "Océane Olivier"
 ]
 MAIN_NAME_LIST.sort()
@@ -533,7 +533,7 @@ def render_admin_page(gs_client, fs_client):
 
 def render_attendance_overview_page(fs_db):
     st.title("📅 Alkalmak Áttekintése")
-    st.markdown("Itt ellenőrizheted a résztvevők számát és névsorát az elmúlt 8 alkalomra visszamenőleg.")
+    st.markdown("Itt ellenőrizheted a résztvevők számát és névsorát az elmúlt 8 alkalomra visszamenőleg. *(Az adatok a Firestore felhőből származnak)*")
 
     dates = generate_tuesday_dates(past_count=8, future_count=0)
     selected_date_str = st.selectbox("Válassz egy dátumot az áttekintéshez:", dates)
@@ -902,7 +902,7 @@ def render_settings_page(fs_db):
 
 def render_accounting_page(fs_db):
     st.title("💰 Havi Elszámolás")
-    st.markdown("Ezzel a funkcióval kiszámolhatod a teremköltségek személyenkénti elosztását a valós jelenléti adatok alapján.")
+    st.markdown("Ezzel a funkcióval kiszámolhatod a teremköltségek személyenkénti elosztását a valós jelenléti adatok alapján. *(A logika most már teljesen a Firestore felhőre támaszkodik, és automatikusan számolja a naptári keddeket!)*")
     
     invoices = get_invoices_fs(fs_db)
     
@@ -931,6 +931,16 @@ def render_accounting_page(fs_db):
                 mime="application/pdf",
                 type="primary"
             )
+            
+            # --- MESSENGER ÜZENET GENERÁLÁS ---
+            st.markdown("---")
+            st.subheader("💬 Üzenet a Messenger csoportba")
+            st.markdown("A jobb felső sarokban lévő kis ikonra kattintva egyből a vágólapra másolhatod a szöveget!")
+            
+            msg_text = f"Sziasztok! 🏐\n\nElkészült a {year}. {month_name} havi röpi elszámolás! A terembérlet és a részvétel alapján a pontos bontást a csatolt PDF-ben találjátok.\n\nKérlek, nézzétek meg és utaljátok a rátok eső összeget a szokásos számlaszámra! Köszi! 🙌"
+            
+            st.code(msg_text, language="text")
+            # ----------------------------------
             
             st.markdown("---")
             col1, col2 = st.columns(2)
@@ -962,33 +972,21 @@ gs_client = get_gsheet_connection()
 fs_db = get_firestore_db()
 
 # State inicializálás
-if 'app_mode' not in st.session_state: st.session_state.app_mode = None
+if 'app_mode' not in st.session_state: st.session_state.app_mode = 'valós'
 if 'admin_step' not in st.session_state: reset_admin_form()
 if 'admin_date' not in st.session_state: st.session_state.admin_date = generate_tuesday_dates()[0]
 
-# --- FŐ LOGIKA (KEZDŐKÉPERNYŐ VAGY APP) ---
-if st.session_state.app_mode is None:
-    render_landing_page()
-else:
-    st.sidebar.markdown(f"**Üzemmód:** {'🟢 Valós' if st.session_state.app_mode == 'valós' else '🧪 Teszt'}")
-    if st.sidebar.button("Kijelentkezés / Módváltás"):
-        st.session_state.app_mode = None
-        reset_admin_form()
-        st.rerun()
-        
-    st.sidebar.markdown("---")
-    # Kibővített menü az új beállítások füllel
-    page = st.sidebar.radio("Menü", ["Admin Regisztráció", "Alkalmak Áttekintése", "Adatbázis", "Havi Elszámolás", "Beállítások (Kivételek)"])
+# --- FŐ LOGIKA (APP) ---
+st.sidebar.markdown("---")
+page = st.sidebar.radio("Menü", ["Admin Regisztráció", "Alkalmak Áttekintése", "Adatbázis", "Havi Elszámolás", "Beállítások (Kivételek)"])
 
-    if page == "Admin Regisztráció": 
-        render_admin_page(gs_client, fs_db)
-    elif page == "Alkalmak Áttekintése":
-        render_attendance_overview_page(fs_db)
-    elif page == "Adatbázis": 
-        render_database_page(gs_client, fs_db)
-    elif page == "Havi Elszámolás":
-        render_accounting_page(fs_db) 
-    elif page == "Beállítások (Kivételek)":
-        render_settings_page(fs_db)
-
-
+if page == "Admin Regisztráció": 
+    render_admin_page(gs_client, fs_db)
+elif page == "Alkalmak Áttekintése":
+    render_attendance_overview_page(fs_db)
+elif page == "Adatbázis": 
+    render_database_page(gs_client, fs_db)
+elif page == "Havi Elszámolás":
+    render_accounting_page(fs_db) 
+elif page == "Beállítások (Kivételek)":
+    render_settings_page(fs_db)
