@@ -123,7 +123,7 @@ def get_tuesdays_in_month(year, month):
     tuesdays = []
     cal = calendar.monthcalendar(year, month)
     for week in cal:
-        tuesday_day = week[calendar.TUESDAY] # Keddi nap száma a héten (0 ha másik hónapba lóg)
+        tuesday_day = week[calendar.TUESDAY]
         if tuesday_day != 0:
             tuesdays.append(datetime(year, month, tuesday_day).date())
     return tuesdays
@@ -239,7 +239,6 @@ def build_total_attendance(rows, year=None):
 
 @st.cache_data(ttl=60)
 def get_cancelled_sessions_fs(_db):
-    """Lekéri az elmaradt edzések dátumait a Firestore-ból."""
     if _db is None: return set()
     try:
         docs = _db.collection(FIRESTORE_CANCELLED).stream()
@@ -255,7 +254,6 @@ def get_cancelled_sessions_fs(_db):
 
 @st.cache_data(ttl=60)
 def get_invoices_fs(_db):
-    """Lekéri a feltöltött számlákat a Firestore-ból a legördülő menühöz."""
     if _db is None: return []
     try:
         docs = _db.collection(FIRESTORE_INVOICES).stream()
@@ -268,7 +266,6 @@ def get_invoices_fs(_db):
                 d["month_name"] = month_names[int(d["target_month"])-1]
             invoices.append(d)
         
-        # Rendezés legújabbtól visszafelé
         invoices.sort(key=lambda x: (int(x.get('target_year', 0)), int(x.get('target_month', 0))), reverse=True)
         return invoices
     except: return []
@@ -279,10 +276,7 @@ def calculate_monthly_accounting_fs(fs_db, inv_dict):
     target_month_name = inv_dict["month_name"]
     total_amount = float(inv_dict["amount"])
 
-    # 1. Összes keddi nap legenerálása az adott hónapban
     all_tuesdays = get_tuesdays_in_month(target_year, target_month)
-    
-    # 2. Elmaradt napok kivonása a Firestore-ból
     cancelled_dates = get_cancelled_sessions_fs(fs_db)
     session_dates = [d for d in all_tuesdays if d not in cancelled_dates]
 
@@ -291,7 +285,6 @@ def calculate_monthly_accounting_fs(fs_db, inv_dict):
 
     cost_per_session = total_amount / len(session_dates)
 
-    # 3. Jelenlét kiolvasása a Firestore-ból (teszt adatok nélkül)
     df_fs = get_attendance_rows_fs(fs_db)
     processed_att = []
     
@@ -312,7 +305,6 @@ def calculate_monthly_accounting_fs(fs_db, inv_dict):
             if rel_date:
                 processed_att.append({"name": name, "is_coming": is_coming, "date": rel_date})
 
-    # 4. Költségek számítása
     elszamolas_data = []
     person_totals = {}
     person_counts = {}
@@ -357,8 +349,6 @@ def generate_pdf_bytes(df_osszesito, month_name, year):
     pdf = FPDF()
     pdf.add_page()
     
-    # --- EGYEDI BETŰTÍPUS (Ő ÉS Ű TÁMOGATÁSÁHOZ) ---
-    # A rendszer ellenőrzi, hogy feltöltöttél-e egy egyedi TTF betűtípust az app mellé.
     has_custom_font = False
     font_path = "Roboto-Regular.ttf"
     font_bold_path = "Roboto-Bold.ttf"
@@ -366,11 +356,9 @@ def generate_pdf_bytes(df_osszesito, month_name, year):
     if os.path.exists(font_path) and os.path.exists(font_bold_path):
         try:
             try:
-                # A régebbi fpdf verziókhoz (uni=True paraméter szükséges a UTF-8-hoz)
                 pdf.add_font("Roboto", "", font_path, uni=True)
                 pdf.add_font("Roboto", "B", font_bold_path, uni=True)
             except TypeError:
-                # Az újabb fpdf2 verziókhoz (nem kéri az uni=True paramétert)
                 pdf.add_font("Roboto", "", font_path)
                 pdf.add_font("Roboto", "B", font_bold_path)
             has_custom_font = True
@@ -380,14 +368,11 @@ def generate_pdf_bytes(df_osszesito, month_name, year):
     def safe_txt(t):
         t_str = str(t)
         if has_custom_font:
-            # Ha van egyedi betűtípusunk, maradhat az eredeti UTF-8 (az Ő és Ű tökéletesen fog működni)
             return t_str
         else:
-            # Ha nincs font fájl, fallback a régi biztonságos cserére (Arial latin-1 miatt)
             t_str = t_str.replace('ő', 'ö').replace('ű', 'ü').replace('Ő', 'Ö').replace('Ű', 'Ü')
             return t_str.encode('latin-1', 'replace').decode('latin-1')
 
-    # A választott betűtípus beállítása
     font_family = "Roboto" if has_custom_font else "Arial"
 
     pdf.set_font(font_family, "B", 16)
@@ -408,40 +393,18 @@ def generate_pdf_bytes(df_osszesito, month_name, year):
         pdf.ln()
         
     try:
-        # Régi fpdf csomag kimeneti formázása
         return pdf.output(dest='S').encode('latin-1')
     except TypeError:
-        # Újabb fpdf2 csomag kimeneti formázása (eleve bytokat ad vissza)
         return pdf.output()
     except AttributeError:
-        # Failsafe megoldás bizonyos környezetekhez
         return bytes(pdf.output())
 
 # --- MEGJELENÍTÉS (UI) ---
 
-def render_landing_page():
-    st.markdown("<h1 style='text-align: center; margin-bottom: 30px;'>🏐 Röpi App</h1>", unsafe_allow_html=True)
-    st.markdown("<h3 style='text-align: center; color: gray; margin-bottom: 50px;'>Kérjük, válassz üzemmódot a belépéshez:</h3>", unsafe_allow_html=True)
-    
-    col1, col2, col3, col4 = st.columns([1, 2, 2, 1])
-    
-    with col2:
-        if st.button("🟢 Jelenlét felvitel\n\n(Valós adatok mentése)", use_container_width=True, type="primary"):
-            st.session_state.app_mode = "valós"
-            st.rerun()
-            
-    with col3:
-        if st.button("🧪 Teszt\n\n(Kipróbálás mentése)", use_container_width=True):
-            st.session_state.app_mode = "teszt"
-            st.rerun()
-
 def render_admin_page(gs_client, fs_client):
     st.title("🛠️ Admin Regisztráció")
     
-    if st.session_state.app_mode == "teszt":
-        st.warning("⚠️ Figyelem: Jelenleg TESZT üzemmódban vagy. Az adatok 'teszt' címkével kerülnek mentésre.")
-    else:
-        st.success("🟢 Jelenleg VALÓS Jelenlét felvitel üzemmódban vagy.")
+    st.success("🟢 Aktív: Jelenlét rögzítése üzemmód.")
         
     rows = get_attendance_rows_gs(gs_client)
     
@@ -502,7 +465,7 @@ def render_admin_page(gs_client, fs_client):
             try:
                 target_date = st.session_state.admin_date
                 ts = datetime.now(HUNGARY_TZ).strftime("%Y-%m-%d %H:%M:%S")
-                current_mode = st.session_state.app_mode
+                current_mode = "valós" # Mindig valós módként mentünk
                 
                 rows_to_add = []
                 for name, data in st.session_state.admin_attendance.items():
@@ -587,7 +550,6 @@ def render_attendance_overview_page(fs_db):
             else:
                 st.info("Erre az alkalomra nincs érvényes regisztráció.")
 
-
 def render_database_page(gs_client, fs_db):
     st.title("🗂️ Adatbázis")
     
@@ -623,85 +585,134 @@ def render_database_page(gs_client, fs_db):
         st.subheader("Firestore Adatbázis megtekintése és szerkesztése")
         st.markdown("Ide kerültek lementésre a felhő alapú működéshez szükséges adatok.")
         
-        # --- ADATMIGRÁCIÓS SZEKCIÓ ---
+        # --- SZINKRONIZÁCIÓS SZEKCIÓ ---
         st.markdown("---")
-        with st.expander("🛠️ Adatmigráció (Sheet -> Firestore)"):
-            st.warning("Csak egyszer használd ezeket a gombokat, hogy ne legyenek duplikációk!")
+        with st.expander("🔄 Adatok Szinkronizálása (Sheet ↔ Firestore)"):
+            st.warning("⚠️ Figyelem: A szinkronizálás felülírja a cél-adatbázist a forrás-adatbázis tartalmával!")
+            
+            sync_source = st.radio("Melyik legyen a FORRÁS (alap) adatbázis?", ["Google Sheets", "Firestore"], horizontal=True)
+            sync_target = "Firestore" if sync_source == "Google Sheets" else "Google Sheets"
+            
+            st.info(f"👉 Irány: **{sync_source}** ➡️ **{sync_target}** (A cél adatai törlődnek és lecserélődnek!)")
             
             col_m1, col_m2 = st.columns(2)
             
             with col_m1:
-                if st.button("👥 Jelenléti adatok átmásolása", type="primary", use_container_width=True):
-                    with st.spinner("Jelenlét másolása..."):
-                        gs_rows = get_attendance_rows_gs(gs_client)
-                        if len(gs_rows) > 1:
-                            success_count = 0
-                            for r in gs_rows[1:]:
-                                try:
-                                    name = r[0] if len(r) > 0 else ""
-                                    if not name: continue
-                                    status = r[1] if len(r) > 1 else "Yes"
-                                    timestamp = r[2] if len(r) > 2 else ""
-                                    event_date = r[3] if len(r) > 3 else ""
-                                    mode_val = r[5] if len(r) > 5 else "valós"
-                                    
-                                    fs_db.collection(FIRESTORE_COLLECTION).add({
-                                        "name": name,
-                                        "status": status,
-                                        "timestamp": timestamp,
-                                        "event_date": event_date,
-                                        "mode": mode_val
-                                    })
-                                    success_count += 1
-                                except Exception: pass
-                            st.success(f"Kész! {success_count} jelenléti adat átmásolva.")
-                            st.cache_data.clear()
-                            time.sleep(2)
-                            st.rerun()
+                if st.button(f"👥 Jelenlét szinkronizálása", type="primary", use_container_width=True):
+                    with st.spinner("Jelenlét szinkronizálása..."):
+                        if sync_source == "Google Sheets":
+                            # Sheets -> Firestore
+                            gs_rows = get_attendance_rows_gs(gs_client)
+                            if len(gs_rows) > 1:
+                                docs = fs_db.collection(FIRESTORE_COLLECTION).stream()
+                                for doc in docs:
+                                    doc.reference.delete()
+                                
+                                success_count = 0
+                                for r in gs_rows[1:]:
+                                    try:
+                                        name = r[0] if len(r) > 0 else ""
+                                        if not name: continue
+                                        fs_db.collection(FIRESTORE_COLLECTION).add({
+                                            "name": name,
+                                            "status": r[1] if len(r) > 1 else "Yes",
+                                            "timestamp": r[2] if len(r) > 2 else "",
+                                            "event_date": r[3] if len(r) > 3 else "",
+                                            "mode": "valós"
+                                        })
+                                        success_count += 1
+                                    except Exception: pass
+                                st.success(f"Kész! {success_count} jelenléti adat átmásolva a Firestore-ba.")
+                            else:
+                                st.info("Nincs másolható jelenléti adat a Sheet-ben.")
+                        
                         else:
-                            st.info("Nincs másolható jelenléti adat a Sheet-ben.")
+                            # Firestore -> Sheets
+                            df_fs = get_attendance_rows_fs(fs_db)
+                            if not df_fs.empty:
+                                try:
+                                    sheet = gs_client.open(GSHEET_NAME).sheet1
+                                    sheet.clear()
+                                    
+                                    new_rows = [["Név", "Jön-e", "Regisztráció Időpontja", "Alkalom Dátuma", "Üres", "Mód"]]
+                                    for _, row in df_fs.iterrows():
+                                        new_rows.append([
+                                            row["Név"], row["Jön-e"], row["Regisztráció Időpontja"], 
+                                            row["Alkalom Dátuma"], "", "valós"
+                                        ])
+                                    
+                                    sheet.append_rows(new_rows, value_input_option='USER_ENTERED')
+                                    st.success(f"Kész! {len(new_rows)-1} jelenléti adat átmásolva a Sheet-be.")
+                                except Exception as e:
+                                    st.error(f"Hiba a Google Sheet írásakor: {e}")
+                            else:
+                                st.info("Nincs adat a Firestore-ban.")
+                        
+                        st.cache_data.clear()
+                        time.sleep(2)
+                        st.rerun()
 
             with col_m2:
-                if st.button("🧾 Számlák átmásolása", type="primary", use_container_width=True):
-                    with st.spinner("Számlák másolása..."):
+                if st.button(f"🧾 Számlák szinkronizálása", type="primary", use_container_width=True):
+                    with st.spinner("Számlák szinkronizálása..."):
                         try:
                             ss = gs_client.open(GSHEET_NAME)
                             szamlak_sheet = ss.worksheet("Szamlak") if "Szamlak" in [w.title for w in ss.worksheets()] else ss.worksheet("szamlak")
-                            rows = szamlak_sheet.get_all_values()
                             
-                            success_count = 0
-                            month_names = ["Január", "Február", "Március", "Április", "Május", "Június", "Július", "Augusztus", "Szeptember", "Október", "November", "December"]
-                            
-                            for r in rows[1:]:
-                                if not r[0]: continue
-                                inv_date = parse_hungarian_date(r[0])
-                                if not inv_date: continue
-                                
-                                try: amount = float(str(r[1]).replace(' ', '').replace('Ft', '').replace('HUF', '').replace('\xa0', ''))
-                                except: continue
-                                
-                                # Cél hónap (előző hónap számítása)
-                                if inv_date.month == 1:
-                                    t_month = 12
-                                    t_year = inv_date.year - 1
+                            if sync_source == "Google Sheets":
+                                # Sheets -> Firestore
+                                rows = szamlak_sheet.get_all_values()
+                                if len(rows) > 1:
+                                    docs = fs_db.collection(FIRESTORE_INVOICES).stream()
+                                    for doc in docs:
+                                        doc.reference.delete()
+                                        
+                                    success_count = 0
+                                    for r in rows[1:]:
+                                        if not r[0]: continue
+                                        inv_date = parse_hungarian_date(r[0])
+                                        if not inv_date: continue
+                                        
+                                        try: amount = float(str(r[1]).replace(' ', '').replace('Ft', '').replace('HUF', '').replace('\xa0', ''))
+                                        except: continue
+                                        
+                                        t_month = 12 if inv_date.month == 1 else inv_date.month - 1
+                                        t_year = inv_date.year - 1 if inv_date.month == 1 else inv_date.year
+                                            
+                                        fs_db.collection(FIRESTORE_INVOICES).add({
+                                            "inv_date": inv_date.strftime("%Y-%m-%d"),
+                                            "target_year": t_year,
+                                            "target_month": t_month,
+                                            "amount": amount,
+                                            "filename": r[2] if len(r) > 2 else ""
+                                        })
+                                        success_count += 1
+                                    st.success(f"Kész! {success_count} számla átmásolva a Firestore-ba.")
                                 else:
-                                    t_month = inv_date.month - 1
-                                    t_year = inv_date.year
+                                    st.info("Nincs számla a Sheet-ben.")
+                            
+                            else:
+                                # Firestore -> Sheets
+                                invoices = get_invoices_fs(fs_db)
+                                if invoices:
+                                    szamlak_sheet.clear()
+                                    new_rows = [["Dátum", "Összeg", "Fájlnév"]]
+                                    for inv in invoices:
+                                        new_rows.append([
+                                            inv["inv_date"], 
+                                            f"{int(inv['amount'])} Ft", 
+                                            inv.get("filename", "")
+                                        ])
+                                    szamlak_sheet.append_rows(new_rows, value_input_option='USER_ENTERED')
+                                    st.success(f"Kész! {len(invoices)} számla átmásolva a Sheet-be.")
+                                else:
+                                    st.info("Nincs számla a Firestore-ban.")
                                     
-                                fs_db.collection(FIRESTORE_INVOICES).add({
-                                    "inv_date": inv_date.strftime("%Y-%m-%d"),
-                                    "target_year": t_year,
-                                    "target_month": t_month,
-                                    "amount": amount,
-                                    "filename": r[2] if len(r) > 2 else ""
-                                })
-                                success_count += 1
-                            st.success(f"Kész! {success_count} számla átmásolva a felhőbe.")
                             st.cache_data.clear()
                             time.sleep(2)
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Hiba a számlák másolása közben: {e}")
+                            st.error(f"Hiba a szinkronizálás közben: {e}")
 
         st.markdown("---")
         
@@ -907,7 +918,7 @@ def render_accounting_page(fs_db):
     invoices = get_invoices_fs(fs_db)
     
     if not invoices:
-        st.warning("⚠️ Nem találtam számlát a Firestore-ban! Kérlek, menj az 'Adatbázis' fülre, nyisd le a 'Adatmigráció' részt, és másold át a számlákat a Sheet-ből!")
+        st.warning("⚠️ Nem találtam számlát a Firestore-ban! Kérlek, menj az 'Adatbázis' fülre, nyisd le a 'Szinkronizáció' részt, és másold át a számlákat a Sheet-ből!")
         return
         
     selected_inv = st.selectbox(
@@ -971,8 +982,7 @@ def admin_save_date():
 gs_client = get_gsheet_connection()
 fs_db = get_firestore_db()
 
-# State inicializálás
-if 'app_mode' not in st.session_state: st.session_state.app_mode = 'valós'
+# State inicializálás (Teszt mód kiszedve, mindig valós)
 if 'admin_step' not in st.session_state: reset_admin_form()
 if 'admin_date' not in st.session_state: st.session_state.admin_date = generate_tuesday_dates()[0]
 
