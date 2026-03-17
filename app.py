@@ -1244,13 +1244,19 @@ def get_name_mappings_fs(_db):
     except Exception:
         return {}
 
-def parse_revolut_excel(uploaded_file):
-    """Revolut Excel kivonat feldolgozása. Visszaadja a bejövő átutalásokat."""
+def parse_revolut_csv(uploaded_file):
+    """Revolut CSV kivonat feldolgozása. Visszaadja a bejövő átutalásokat."""
     try:
-        df = pd.read_excel(uploaded_file)
-        # Revolut Excel oszlopok: Type, Product, Started Date, Completed Date,
-        # Description, Amount, Fee, Currency, State, Balance
-        # Kis/nagybetű független oszlopnév keresés
+        # Revolut CSV pontosvesszővel vagy vesszővel elválasztott lehet
+        try:
+            df = pd.read_csv(uploaded_file, sep=",")
+            if len(df.columns) < 3:
+                uploaded_file.seek(0)
+                df = pd.read_csv(uploaded_file, sep=";")
+        except Exception:
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file, sep=";")
+
         df.columns = [c.strip() for c in df.columns]
         col_map = {c.lower(): c for c in df.columns}
 
@@ -1260,20 +1266,17 @@ def parse_revolut_excel(uploaded_file):
         type_col   = col_map.get("type", col_map.get("típus", None))
 
         if not amount_col or not desc_col:
-            return None, "Nem találom az 'Amount' és 'Description' oszlopokat. Ellenőrizd hogy Revolut Excel kivonatot töltöttél-e fel."
+            return None, f"Nem találom az 'Amount' és 'Description' oszlopokat. Talált oszlopok: {list(df.columns)}"
 
-        # Csak bejövő, sikeres tranzakciók
         filtered = df.copy()
         if state_col:
             filtered = filtered[filtered[state_col].astype(str).str.lower().isin(["completed", "teljesített", "kész"])]
         if type_col:
-            # Revolut: "TRANSFER" vagy "TOPUP" = beérkező
             filtered = filtered[~filtered[type_col].astype(str).str.lower().isin(["card payment", "exchange", "fee", "atm"])]
 
-        # Csak pozitív összegek (beérkező)
-        filtered = filtered[pd.to_numeric(filtered[amount_col], errors='coerce') > 0].copy()
-        filtered["_amount"] = pd.to_numeric(filtered[amount_col], errors='coerce')
-        filtered["_name"]   = filtered[desc_col].astype(str).str.strip()
+        filtered["_amount"] = pd.to_numeric(filtered[amount_col].astype(str).str.replace(",", "."), errors='coerce')
+        filtered = filtered[filtered["_amount"] > 0].copy()
+        filtered["_name"] = filtered[desc_col].astype(str).str.strip()
 
         return filtered[["_name", "_amount"]].reset_index(drop=True), None
     except Exception as e:
@@ -1302,8 +1305,8 @@ def render_payment_check_page(fs_db, gs_client):
     # ── TAB 1: Feltöltés & Ellenőrzés ──────────────────────────
     with tab1:
         uploaded = st.file_uploader(
-            "Töltsd fel a Revolut Excel kivonatot (.xlsx):",
-            type=["xlsx"],
+            "Töltsd fel a Revolut CSV kivonatot (.csv):",
+            type=["csv"],
             key="revolut_upload"
         )
 
@@ -1313,12 +1316,12 @@ def render_payment_check_page(fs_db, gs_client):
             1. Nyisd meg a Revolut appot
             2. Menj a fiókodra → **Kimutatások / Statements**
             3. Válaszd ki a megfelelő hónapot
-            4. Formátum: **Excel (.xlsx)**
+            4. Formátum: **CSV**
             5. Töltsd fel itt
             """)
             return
 
-        df_revolut, err = parse_revolut_excel(uploaded)
+        df_revolut, err = parse_revolut_csv(uploaded)
         if err:
             st.error(err)
             return
