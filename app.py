@@ -1245,9 +1245,9 @@ def get_name_mappings_fs(_db):
         return {}
 
 def parse_revolut_csv(uploaded_file):
-    """Revolut CSV kivonat feldolgozása. Visszaadja a bejövő átutalásokat."""
+    """Revolut CSV kivonat feldolgozása — magyar oszlopnevekkel."""
     try:
-        # Revolut CSV pontosvesszővel vagy vesszővel elválasztott lehet
+        uploaded_file.seek(0)
         try:
             df = pd.read_csv(uploaded_file, sep=",")
             if len(df.columns) < 3:
@@ -1258,35 +1258,49 @@ def parse_revolut_csv(uploaded_file):
             df = pd.read_csv(uploaded_file, sep=";")
 
         df.columns = [c.strip() for c in df.columns]
-        col_map = {c.lower(): c for c in df.columns}
 
-        amount_col = col_map.get("amount", col_map.get("összeg", None))
-        desc_col   = col_map.get("description", col_map.get("leírás", col_map.get("name", None)))
-        state_col  = col_map.get("state", col_map.get("állapot", col_map.get("status", None)))
-        type_col   = col_map.get("type", col_map.get("típus", None))
+        # Magyar Revolut oszlopok
+        leiras_col = next((c for c in df.columns if "leírás" in c.lower() or "leiras" in c.lower() or "description" in c.lower()), None)
+        osszeg_col = next((c for c in df.columns if "összeg" in c.lower() or "osszeg" in c.lower() or "amount" in c.lower()), None)
+        state_col  = next((c for c in df.columns if "state" in c.lower()), None)
 
-        if not amount_col or not desc_col:
-            return None, f"Nem találom az 'Amount' és 'Description' oszlopokat. Talált oszlopok: {list(df.columns)}"
+        if not leiras_col or not osszeg_col:
+            return None, f"Nem találom az oszlopokat. Talált oszlopok: {list(df.columns)}"
 
-        filtered = df.copy()
+        # Csak teljesített tranzakciók
         if state_col:
-            filtered = filtered[filtered[state_col].astype(str).str.lower().isin(["completed", "teljesített", "kész"])]
-        if type_col:
-            filtered = filtered[~filtered[type_col].astype(str).str.lower().isin(["card payment", "exchange", "fee", "atm"])]
+            df = df[df[state_col].astype(str).str.upper() == "ELVÉGEZVE"].copy()
 
-        filtered["_amount"] = pd.to_numeric(filtered[amount_col].astype(str).str.replace(",", "."), errors='coerce')
-        filtered = filtered[filtered["_amount"] > 0].copy()
-        filtered["_name"] = filtered[desc_col].astype(str).str.strip()
+        # Összeg numerikussá alakítása
+        df["_amount"] = pd.to_numeric(df[osszeg_col].astype(str).str.replace(",", "."), errors="coerce")
 
-        return filtered[["_name", "_amount"]].reset_index(drop=True), None
+        # Csak bejövő (pozitív) átutalások — "Átutalás tőle:" tartalmú sorok
+        incoming = df[
+            (df["_amount"] > 0) &
+            (df[leiras_col].astype(str).str.contains("tőle|tole|transfer from|from", case=False, na=False))
+        ].copy()
+
+        # Név kinyerése: "Átutalás tőle: CSANAD LACZKO" → "CSANAD LACZKO"
+        def extract_name(desc):
+            desc = str(desc)
+            for prefix in ["Átutalás tőle:", "Atutalas tole:", "Transfer from:", "From:"]:
+                if prefix.lower() in desc.lower():
+                    idx = desc.lower().index(prefix.lower()) + len(prefix)
+                    return desc[idx:].strip()
+            return desc.strip()
+
+        incoming["_name"] = incoming[leiras_col].apply(extract_name)
+
+        return incoming[["_name", "_amount"]].reset_index(drop=True), None
+
     except Exception as e:
         return None, f"Hiba a fájl feldolgozásakor: {e}"
 
+
 def render_payment_check_page(fs_db, gs_client):
     st.title("💳 Befizetések Ellenőrzése")
-    st.markdown("Töltsd fel a Revolut Excel kivonatot, és az app automatikusan összehasonlítja a kiküldött elszámolással.")
+    st.markdown("Töltsd fel a Revolut CSV kivonatot, és az app összehasonlítja a kiküldött elszámolással.")
 
-    # Ellenőrzés: van-e elmentett elszámolás
     if "acc_df_osszesito" not in st.session_state:
         st.warning("⚠️ Először futtasd le az elszámolást a **Havi Elszámolás** oldalon, majd gyere vissza ide!")
         return
@@ -1297,27 +1311,19 @@ def render_payment_check_page(fs_db, gs_client):
 
     st.info(f"📅 Aktuális elszámolás: **{year}. {month_name}** — {len(df_osszesito)} tétel")
 
-    # Névmapping betöltése
-    name_mappings = get_name_mappings_fs(fs_db)
+    tab1, tab2 = st.tabs(["📤 Kivonat & Ellenőrzés", "🔗 Név párosítások"])
 
-    tab1, tab2 = st.tabs(["📤 Kivonat feltöltése & Ellenőrzés", "🔗 Név párosítások kezelése"])
-
-    # ── TAB 1: Feltöltés & Ellenőrzés ──────────────────────────
+    # ── TAB 1 ───────────────────────────────────────────────────
     with tab1:
-        uploaded = st.file_uploader(
-            "Töltsd fel a Revolut CSV kivonatot (.csv):",
-            type=["csv"],
-            key="revolut_upload"
-        )
+        uploaded = st.file_uploader("Töltsd fel a Revolut CSV kivonatot:", type=["csv"], key="revolut_upload")
 
         if uploaded is None:
             st.markdown("""
             **Hogyan exportáld a kivonatot Revolut appból:**
             1. Nyisd meg a Revolut appot
             2. Menj a fiókodra → **Kimutatások / Statements**
-            3. Válaszd ki a megfelelő hónapot
-            4. Formátum: **CSV**
-            5. Töltsd fel itt
+            3. Válaszd ki a hónapot → Formátum: **CSV**
+            4. Töltsd fel itt
             """)
             return
 
@@ -1326,52 +1332,56 @@ def render_payment_check_page(fs_db, gs_client):
             st.error(err)
             return
 
-        st.success(f"✅ {len(df_revolut)} bejövő tranzakció betöltve a kivonatból.")
+        st.success(f"✅ {len(df_revolut)} bejövő átutalás betöltve.")
 
-        # Csak a főtagok (nem "Név - Vendég" sorok)
+        # Névmapping betöltése
+        name_mappings = get_name_mappings_fs(fs_db)
+        # revolut_name → system_name fordított map
+        rev_to_sys = {rev_n: info["system_name"] for rev_n, info in name_mappings.items()}
+
+        # Csak főtagok (nem "Név - Vendég" sorok)
         main_members = df_osszesito[~df_osszesito["Név"].str.contains(" - ", na=False)].copy()
 
         # Egyeztetés
-        tolerance = TOLERANCE
         results = []
+        matched_revolut_names = set()
 
         for _, member_row in main_members.iterrows():
-            sys_name  = member_row["Név"]
-            expected  = float(member_row["Fizetendő (Ft)"])
-
-            # Revolut nevét keressük: előbb a mentett mapping-ben, utána fuzzy
-            revolut_name = None
-            for rev_n, info in name_mappings.items():
-                if info["system_name"] == sys_name:
-                    revolut_name = rev_n
-                    break
+            sys_name = member_row["Név"]
+            expected = float(member_row["Fizetendő (Ft)"])
 
             paid_amount = None
-            matched_revolut_name = None
+            matched_rev_name = None
 
-            if revolut_name:
-                # Pontos névegyezés a mappingből
-                match = df_revolut[df_revolut["_name"].str.lower() == revolut_name.lower()]
-                if not match.empty:
-                    paid_amount = float(match["_amount"].sum())
-                    matched_revolut_name = revolut_name
-            else:
-                # Fuzzy: névben való tartalmazás (keresztnév alapú)
-                first_name = sys_name.split()[0].lower()
-                last_name  = sys_name.split()[-1].lower() if len(sys_name.split()) > 1 else ""
-                for _, rev_row in df_revolut.iterrows():
-                    rev_lower = rev_row["_name"].lower()
-                    if first_name in rev_lower or (last_name and last_name in rev_lower):
-                        paid_amount = float(rev_row["_amount"])
-                        matched_revolut_name = rev_row["_name"]
-                        break
+            # 1. Mentett mapping alapján
+            for rev_n, s_name in rev_to_sys.items():
+                if s_name == sys_name:
+                    match = df_revolut[df_revolut["_name"].str.upper() == rev_n.upper()]
+                    if not match.empty:
+                        paid_amount = float(match["_amount"].sum())
+                        matched_rev_name = rev_n
+                        matched_revolut_names.add(rev_n)
+                    break
+
+            # 2. Ha nincs mapping, próbál fuzzy egyezést (csak ha egyetlen match van)
+            if paid_amount is None:
+                first = sys_name.split()[0].lower()
+                last  = sys_name.split()[-1].lower() if len(sys_name.split()) > 1 else ""
+                candidates = df_revolut[
+                    df_revolut["_name"].str.lower().str.contains(first, na=False) |
+                    (last != "" and df_revolut["_name"].str.lower().str.contains(last, na=False))
+                ]
+                if len(candidates) == 1:
+                    paid_amount = float(candidates.iloc[0]["_amount"])
+                    matched_rev_name = candidates.iloc[0]["_name"]
+                    matched_revolut_names.add(matched_rev_name)
 
             # Értékelés
             if paid_amount is not None:
                 diff = paid_amount - expected
-                if abs(diff) <= tolerance:
+                if abs(diff) <= TOLERANCE:
                     status = "✅ Fizetett"
-                elif diff > tolerance:
+                elif diff > TOLERANCE:
                     status = "✅ Fizetett (többet)"
                 else:
                     status = "⚠️ Kevesebbet fizetett"
@@ -1382,99 +1392,117 @@ def render_payment_check_page(fs_db, gs_client):
             results.append({
                 "Név": sys_name,
                 "Fizetendő (Ft)": f"{expected:.0f} Ft",
-                "Revolut név": matched_revolut_name or "— (nem találtam)",
+                "Revolut név": matched_rev_name or "— ismeretlen",
                 "Befizetett (Ft)": f"{paid_amount:.0f} Ft" if paid_amount else "—",
                 "Különbség": f"{diff:+.0f} Ft" if paid_amount else "—",
                 "Státusz": status,
             })
 
-        df_results = pd.DataFrame(results)
-
-        # Összesítő metrikák
+        # Metrikák
         fizet = sum(1 for r in results if "✅" in r["Státusz"])
         nem   = sum(1 for r in results if "❌" in r["Státusz"])
         kevs  = sum(1 for r in results if "⚠️" in r["Státusz"])
-
         m1, m2, m3 = st.columns(3)
         m1.metric("✅ Fizetett", f"{fizet} fő")
         m2.metric("❌ Nem fizetett", f"{nem} fő")
         m3.metric("⚠️ Kevesebbet", f"{kevs} fő")
-
         st.markdown("---")
 
-        # Státusz szerinti színezés
         def color_status(val):
-            if "✅" in str(val):
-                return "background-color: #d4edda; color: #155724;"
-            elif "❌" in str(val):
-                return "background-color: #f8d7da; color: #721c24;"
-            elif "⚠️" in str(val):
-                return "background-color: #fff3cd; color: #856404;"
+            if "✅" in str(val): return "background-color: #d4edda; color: #155724;"
+            elif "❌" in str(val): return "background-color: #f8d7da; color: #721c24;"
+            elif "⚠️" in str(val): return "background-color: #fff3cd; color: #856404;"
             return ""
 
-        styled = df_results.style.applymap(color_status, subset=["Státusz"])
-        st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.dataframe(
+            pd.DataFrame(results).style.applymap(color_status, subset=["Státusz"]),
+            use_container_width=True, hide_index=True
+        )
 
-        # Nem fizetők listája Messengerbe
+        # Emlékeztető üzenet
         nem_fizeto = [r["Név"] for r in results if "❌" in r["Státusz"]]
         keveset    = [r["Név"] for r in results if "⚠️" in r["Státusz"]]
-
         if nem_fizeto or keveset:
             st.markdown("---")
             st.subheader("💬 Emlékeztető üzenet")
-            nevek = ""
+            reszek = []
             if nem_fizeto:
-                nevek += ", ".join(nem_fizeto)
+                reszek.append("Nem fizetett: " + ", ".join(nem_fizeto))
             if keveset:
-                if nevek:
-                    nevek += " | Kevesebbet: " + ", ".join(keveset)
-                else:
-                    nevek = "Kevesebbet fizett: " + ", ".join(keveset)
-            reminder = (
-                f"Sziasztok! 🏐\n\n"
-                f"A {year}. {month_name} havi röpi befizetéseket ellenőriztem.\n"
-                f"Az alábbiak még nem fizették be az összeget: **{nevek}**\n\n"
-                f"Kérlek utaljátok mielőbb! 🙏"
-            )
+                reszek.append("Kevesebbet fizetett: " + ", ".join(keveset))
+            reminder = (f"Sziasztok! 🏐\n\nA {year}. {month_name} havi röpi befizetéseket ellenőriztem.\n"
+                        + "\n".join(reszek) + "\n\nKérlek utaljátok mielőbb! 🙏")
             st.code(reminder, language="text")
 
-        # Ismeretlen Revolut nevek jelzése
-        st.markdown("---")
-        all_sys_names_lower = [r["Revolut név"].lower() for r in results if r["Revolut név"] != "— (nem találtam)"]
-        unknown_revolut = df_revolut[~df_revolut["_name"].str.lower().isin(all_sys_names_lower)]
-        if not unknown_revolut.empty:
-            with st.expander(f"🔍 {len(unknown_revolut)} ismeretlen Revolut feladó — párosítsd őket!"):
-                st.info("Ezek a beérkező utalások nem lettek egyeztetni senkivel. A 'Név párosítások' fülön add hozzá őket.")
-                st.dataframe(unknown_revolut.rename(columns={"_name": "Revolut név", "_amount": "Összeg (Ft)"}),
-                             use_container_width=True, hide_index=True)
+        # Ismeretlen Revolut nevek — párosítás ajánlat
+        unmatched_revolut = df_revolut[~df_revolut["_name"].isin(matched_revolut_names)]
+        already_mapped = set(rev_to_sys.keys())
+        new_unmatched = unmatched_revolut[~unmatched_revolut["_name"].isin(already_mapped)]
 
-    # ── TAB 2: Névpárosítások ───────────────────────────────────
+        if not new_unmatched.empty:
+            st.markdown("---")
+            st.subheader("🔍 Párosítatlan befizetők")
+            st.info("Ezek a Revolut nevek nem lettek egyeztetve. Párosítsd őket a 'Név párosítások' fülön!")
+            st.dataframe(
+                new_unmatched.rename(columns={"_name": "Revolut név", "_amount": "Összeg (Ft)"}),
+                use_container_width=True, hide_index=True
+            )
+
+    # ── TAB 2 ───────────────────────────────────────────────────
     with tab2:
         st.subheader("🔗 Revolut név ↔ Rendszer név párosítások")
-        st.markdown("Ha valakinek a Revolut neve eltér a rendszerben lévő nevétől, itt add meg egyszer és a rendszer megjegyzi.")
+        st.markdown("Párosítsd a Revolut neveket a rendszerben lévő nevekkel. Ez **egyszer elég** — a rendszer megjegyzi.")
 
-        # Új párosítás hozzáadása
+        name_mappings = get_name_mappings_fs(fs_db)
+        rev_to_sys = {rev_n: info["system_name"] for rev_n, info in name_mappings.items()}
+        already_mapped_revolut = set(rev_to_sys.keys())
+
+        # Revolut nevek a feltöltött CSV-ből (ha van)
+        revolut_names_from_csv = []
+        if "revolut_upload" in st.session_state and st.session_state["revolut_upload"] is not None:
+            try:
+                st.session_state["revolut_upload"].seek(0)
+                df_tmp, _ = parse_revolut_csv(st.session_state["revolut_upload"])
+                if df_tmp is not None:
+                    revolut_names_from_csv = sorted(df_tmp["_name"].unique().tolist())
+            except Exception:
+                pass
+
+        # Csak a még nem párosított nevek jelennek meg
+        unpaired_revolut = [n for n in revolut_names_from_csv if n not in already_mapped_revolut]
+
         with st.container(border=True):
             st.markdown("**Új párosítás hozzáadása**")
+
+            sys_name_options = sorted(
+                df_osszesito[~df_osszesito["Név"].str.contains(" - ", na=False)]["Név"].tolist()
+            )
+
             col1, col2 = st.columns(2)
             with col1:
-                rev_name_input = st.text_input("Revolut-on megjelenő név:", key="rev_name_input",
-                                               placeholder="pl. Gergő Márki")
+                if unpaired_revolut:
+                    rev_choice = st.selectbox(
+                        "Revolut név (a feltöltött CSV-ből):",
+                        ["— Válassz —"] + unpaired_revolut,
+                        key="rev_name_dropdown"
+                    )
+                    rev_name_input = rev_choice if rev_choice != "— Válassz —" else ""
+                else:
+                    st.info("Minden Revolut név már párosítva van, vagy nincs feltöltött CSV.")
+                    rev_name_input = st.text_input("Vagy írj be manuálisan:", key="rev_name_manual")
+
             with col2:
-                sys_name_options = sorted(df_osszesito[~df_osszesito["Név"].str.contains(" - ", na=False)]["Név"].tolist())
-                sys_name_select  = st.selectbox("Rendszerben lévő neve:", sys_name_options, key="sys_name_select")
+                sys_name_select = st.selectbox("Rendszerben lévő neve:", sys_name_options, key="sys_name_select")
 
             if st.button("💾 Párosítás mentése", type="primary"):
                 if not rev_name_input.strip():
-                    st.warning("Add meg a Revolut nevet!")
+                    st.warning("Válassz vagy írj be egy Revolut nevet!")
                 else:
                     try:
-                        # Töröljük ha már volt ilyen rendszer névhez mapping
-                        existing = get_name_mappings_fs(fs_db)
-                        for rev_n, info in existing.items():
+                        # Ha már volt párosítás ehhez a rendszer névhez, töröljük
+                        for rev_n, info in name_mappings.items():
                             if info["system_name"] == sys_name_select:
                                 fs_db.collection(FIRESTORE_NAME_MAPPING).document(info["doc_id"]).delete()
-
                         fs_db.collection(FIRESTORE_NAME_MAPPING).add({
                             "revolut_name": rev_name_input.strip(),
                             "system_name": sys_name_select
@@ -1486,12 +1514,12 @@ def render_payment_check_page(fs_db, gs_client):
                     except Exception as e:
                         st.error(f"Hiba: {e}")
 
-        # Meglévő párosítások listája
+        # Meglévő párosítások
         st.markdown("---")
         st.subheader("Mentett párosítások")
-        current_mappings = get_name_mappings_fs(fs_db)
-        if current_mappings:
-            for rev_n, info in current_mappings.items():
+        current = get_name_mappings_fs(fs_db)
+        if current:
+            for rev_n, info in current.items():
                 with st.container(border=True):
                     c1, c2, c3 = st.columns([2, 2, 1], vertical_alignment="center")
                     c1.markdown(f"**{rev_n}** *(Revolut)*")
@@ -1501,8 +1529,7 @@ def render_payment_check_page(fs_db, gs_client):
                         get_name_mappings_fs.clear()
                         st.rerun()
         else:
-            st.info("Még nincsenek mentett párosítások. Ha mindenki neve egyezik a Revoluton, nincs is szükség rájuk.")
-
+            st.info("Még nincsenek mentett párosítások.")
 
 # ─────────────────────────────────────────────
 # APP START
