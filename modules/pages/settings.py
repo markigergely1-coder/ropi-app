@@ -1,13 +1,41 @@
 import streamlit as st
 import calendar
+import qrcode
+from io import BytesIO
 from google.cloud import firestore
 
 from modules.config import FIRESTORE_CANCELLED
 from modules.db import get_cancelled_sessions_fs
 
 
+def _generate_qr_bytes(url):
+    qr = qrcode.QRCode(box_size=6, border=2)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def render_settings_page(fs_db):
     st.title("⚙️ Beállítások (Kivételek)")
+
+    with st.container(border=True):
+        st.subheader("📲 QR Check-in kód")
+        try:
+            checkin_url = st.secrets["app"]["checkin_url"]
+        except Exception:
+            checkin_url = "https://ropi-app.streamlit.app/?checkin=1"
+        col_qr, col_info = st.columns([1, 2], vertical_alignment="center")
+        with col_qr:
+            st.image(_generate_qr_bytes(checkin_url), width=180)
+        with col_info:
+            st.markdown("**Check-in URL:**")
+            st.code(checkin_url, language=None)
+            st.caption("Nyomtasd ki vagy jelenítsd meg a teremben. A tagok ezzel jelentkeznek be.")
+    st.markdown("---")
+
     st.markdown("Itt adhatod meg azokat a keddi napokat, amikor **ELMARADT** az edzés.")
     if fs_db is None:
         st.error("Nincs Firestore kapcsolat.")

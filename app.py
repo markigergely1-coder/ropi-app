@@ -9,11 +9,17 @@ from modules.pages.accounting import render_accounting_page
 from modules.pages.members import render_members_page
 from modules.pages.payments import render_payment_check_page
 from modules.pages.settings import render_settings_page
+from modules.pages.checkin import render_checkin_page
 
 st.set_page_config(page_title="Röpi App Pro", layout="wide", page_icon="🏐")
 
 gs_client = get_gsheet_connection()
 fs_db = get_firestore_db()
+
+# QR check-in oldal — publikus, login/sidebar nélkül
+if st.query_params.get("checkin") == "1":
+    render_checkin_page(fs_db)
+    st.stop()
 
 if 'admin_step' not in st.session_state:
     reset_admin_form()

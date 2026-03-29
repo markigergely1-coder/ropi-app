@@ -9,6 +9,8 @@ FIRESTORE_CANCELLED = "cancelled_sessions"
 FIRESTORE_MEMBERS = "members"
 MEMBERS_SHEET_NAME = "Tagok"
 FIRESTORE_NAME_MAPPING = "revolut_name_mapping"
+FIRESTORE_SETTLEMENTS = "settlements"
+FIRESTORE_DEVICES = "device_registrations"
 TOLERANCE = 500  # Ft
 
 MAIN_NAME_LIST = [

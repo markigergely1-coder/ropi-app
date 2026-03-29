@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import time
 
-from modules.db import get_invoices_fs, get_members_fs
+from modules.db import get_invoices_fs, get_members_fs, save_settlement_fs, get_settlement_fs
 from modules.utils import calculate_monthly_accounting_fs, generate_pdf_bytes, send_personal_email, send_admin_summary_email
 
 
@@ -29,10 +29,25 @@ def render_accounting_page(fs_db, gs_client):
         st.session_state["acc_month_name"] = month_name
         st.session_state["acc_year"] = year
         st.session_state["acc_pdf_bytes"] = generate_pdf_bytes(df_osszesito, month_name, year)
+        st.session_state["acc_from_cache"] = False
+        ok, result = save_settlement_fs(fs_db, year, selected_inv["target_month"], month_name, df_elszamolas, df_osszesito)
+        if not ok:
+            st.warning(f"⚠️ Firestore mentés sikertelen: {result}")
         st.rerun()
 
     if "acc_df_osszesito" not in st.session_state:
-        return
+        # Megpróbáljuk betölteni Firestore-ból az utoljára kalkulált hónapot
+        loaded = get_settlement_fs(fs_db, selected_inv["target_year"], selected_inv["target_month"])
+        if loaded:
+            df_elszamolas, df_osszesito, month_name = loaded
+            st.session_state["acc_df_elszamolas"] = df_elszamolas
+            st.session_state["acc_df_osszesito"] = df_osszesito
+            st.session_state["acc_month_name"] = month_name
+            st.session_state["acc_year"] = selected_inv["target_year"]
+            st.session_state["acc_pdf_bytes"] = generate_pdf_bytes(df_osszesito, month_name, selected_inv["target_year"])
+            st.session_state["acc_from_cache"] = True
+        else:
+            return
 
     df_osszesito = st.session_state["acc_df_osszesito"]
     df_elszamolas = st.session_state["acc_df_elszamolas"]
@@ -40,7 +55,10 @@ def render_accounting_page(fs_db, gs_client):
     year = st.session_state["acc_year"]
     pdf_bytes = st.session_state["acc_pdf_bytes"]
 
-    st.success(f"✅ Kalkuláció sikeres: {year}. {month_name}")
+    if st.session_state.get("acc_from_cache"):
+        st.info(f"💾 Mentett elszámolás betöltve: {year}. {month_name}")
+    else:
+        st.success(f"✅ Kalkuláció sikeres: {year}. {month_name}")
     st.download_button(label="📥 Elszámolás Letöltése (PDF)", data=pdf_bytes,
                        file_name=f"Havi_Elszamolas_{year}_{month_name}.pdf", mime="application/pdf", type="primary")
 

@@ -10,6 +10,7 @@ import pandas as pd
 from modules.config import (
     CREDENTIALS_FILE, GSHEET_NAME, FIRESTORE_COLLECTION, FIRESTORE_INVOICES,
     FIRESTORE_CANCELLED, FIRESTORE_MEMBERS, MEMBERS_SHEET_NAME, FIRESTORE_NAME_MAPPING,
+    FIRESTORE_SETTLEMENTS, FIRESTORE_DEVICES,
 )
 
 
@@ -230,6 +231,69 @@ def sync_members_gs_to_fs(gs_client, fs_db):
         return True, f"{count} tag szinkronizálva a Firestore-ba."
     except Exception as e:
         return False, str(e)
+
+
+def save_settlement_fs(fs_db, year, month_num, month_name, df_elszamolas, df_osszesito):
+    """Elmenti az elszámolás eredményét Firestore-ba. Doc ID: 'YYYY-MM' formátum."""
+    if fs_db is None:
+        return False, "Nincs Firestore kapcsolat."
+    try:
+        doc_id = f"{year}-{int(month_num):02d}"
+        fs_db.collection(FIRESTORE_SETTLEMENTS).document(doc_id).set({
+            "year": year,
+            "month_num": int(month_num),
+            "month_name": month_name,
+            "df_elszamolas": df_elszamolas.to_json(orient="records", force_ascii=False),
+            "df_osszesito": df_osszesito.to_json(orient="records", force_ascii=False),
+            "saved_at": firestore.SERVER_TIMESTAMP,
+        })
+        return True, doc_id
+    except Exception as e:
+        return False, str(e)
+
+
+def get_settlement_fs(fs_db, year, month_num):
+    """Betölti az elszámolást Firestore-ból. Visszatér: (df_elszamolas, df_osszesito, month_name) vagy None."""
+    if fs_db is None:
+        return None
+    try:
+        doc_id = f"{year}-{int(month_num):02d}"
+        doc = fs_db.collection(FIRESTORE_SETTLEMENTS).document(doc_id).get()
+        if not doc.exists:
+            return None
+        d = doc.to_dict()
+        df_elszamolas = pd.read_json(d["df_elszamolas"], orient="records")
+        df_osszesito = pd.read_json(d["df_osszesito"], orient="records")
+        return df_elszamolas, df_osszesito, d["month_name"]
+    except Exception:
+        return None
+
+
+def get_device_registration(fs_db, device_id):
+    """Visszaadja a device_id-hez tartozó nevet, vagy None-t."""
+    if not fs_db or not device_id:
+        return None
+    try:
+        doc = fs_db.collection(FIRESTORE_DEVICES).document(device_id).get()
+        if doc.exists:
+            return doc.to_dict().get("name")
+        return None
+    except Exception:
+        return None
+
+
+def save_device_registration(fs_db, device_id, name):
+    """Elmenti a device_id → name mappinget Firestore-ba."""
+    if not fs_db or not device_id:
+        return False
+    try:
+        fs_db.collection(FIRESTORE_DEVICES).document(device_id).set({
+            "name": name,
+            "registered_at": firestore.SERVER_TIMESTAMP,
+        })
+        return True
+    except Exception:
+        return False
 
 
 @st.cache_data(ttl=120)
