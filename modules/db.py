@@ -269,6 +269,29 @@ def get_settlement_fs(fs_db, year, month_num):
         return None
 
 
+def sync_qr_checkins_to_sheet(fs_db, gs_client):
+    """QR check-in rekordokat (synced_to_sheet=False) szinkronizálja a Google Sheetsbe."""
+    if not fs_db or not gs_client:
+        return 0
+    try:
+        docs = list(fs_db.collection(FIRESTORE_COLLECTION)
+                    .where("synced_to_sheet", "==", False).stream())
+        if not docs:
+            return 0
+        rows = []
+        for doc in docs:
+            d = doc.to_dict()
+            rows.append([d.get("name",""), d.get("status","Yes"),
+                         d.get("timestamp",""), d.get("event_date",""), "", d.get("mode","qr")])
+        sheet = gs_client.open(GSHEET_NAME).sheet1
+        sheet.append_rows(rows, value_input_option='USER_ENTERED')
+        for doc in docs:
+            doc.reference.update({"synced_to_sheet": True})
+        return len(rows)
+    except Exception:
+        return 0
+
+
 def get_device_registration(fs_db, device_id):
     """Visszaadja a device_id-hez tartozó nevet, vagy None-t."""
     if not fs_db or not device_id:

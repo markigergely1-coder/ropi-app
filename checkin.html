@@ -180,17 +180,30 @@ firebase.initializeApp({ apiKey: FIREBASE_API_KEY, projectId: PROJECT_ID });
 const db = firebase.firestore();
 
 // --- Globals ---
-let eventDate = getLastTuesday();
+let eventDate = null;
 let currentDeviceId = null;
 let currentName = null;
 
 // --- Segédfüggvények ---
-function getLastTuesday() {
+function toDateStr(d) {
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+async function getEventDate() {
     const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Budapest' }));
     const day = now.getDay(); // 0=Sun,1=Mon,2=Tue,...
-    const back = (day - 2 + 7) % 7;
-    now.setDate(now.getDate() - back);
-    return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    if (day === 2) {
+        const todayStr = toDateStr(now);
+        try {
+            const snap = await db.collection('cancelled_sessions').where('date','==',todayStr).limit(1).get();
+            if (snap.empty) return todayStr;
+        } catch(e) {}
+    }
+    // Next Tuesday
+    const next = new Date(now);
+    const daysUntil = (2 - day + 7) % 7 || 7;
+    next.setDate(now.getDate() + daysUntil);
+    return toDateStr(next);
 }
 
 function fmtDate(d) {
@@ -258,7 +271,7 @@ function switchTab(tab) {
 async function saveAttendance(name) {
     const ts = new Date().toLocaleString('sv-SE', { timeZone:'Europe/Budapest' }).replace('T',' ');
     await db.collection('attendance_records').add({
-        name, status:'Yes', timestamp:ts, event_date:eventDate, mode:'qr'
+        name, status:'Yes', timestamp:ts, event_date:eventDate, mode:'qr', synced_to_sheet:false
     });
 }
 
@@ -346,6 +359,7 @@ async function checkInGuest() {
 // --- Inicializálás ---
 async function init() {
     try {
+        eventDate = await getEventDate();
         currentDeviceId = getOrCreateDeviceId();
 
         // Ismert eszköz?

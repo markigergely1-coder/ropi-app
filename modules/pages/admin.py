@@ -3,7 +3,7 @@ import time
 from datetime import datetime
 
 from modules.config import MAIN_NAME_LIST, PLUS_PEOPLE_COUNT, HUNGARY_TZ
-from modules.db import get_attendance_rows_gs, save_all_data
+from modules.db import get_attendance_rows_gs, save_all_data, sync_qr_checkins_to_sheet
 from modules.utils import generate_tuesday_dates, get_historical_guests_list
 
 
@@ -24,6 +24,11 @@ def admin_save_date():
 def render_admin_page(gs_client, fs_client):
     st.title("🛠️ Admin Regisztráció")
     st.success("🟢 Aktív: Jelenlét rögzítése üzemmód.")
+    if "qr_sync_done" not in st.session_state:
+        synced = sync_qr_checkins_to_sheet(fs_client, gs_client)
+        st.session_state.qr_sync_done = True
+        if synced > 0:
+            st.toast(f"✅ {synced} QR check-in szinkronizálva a Sheetsbe.", icon="📊")
     rows = get_attendance_rows_gs(gs_client)
 
     if st.session_state.admin_step == 1:
