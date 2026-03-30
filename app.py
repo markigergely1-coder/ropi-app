@@ -1,4 +1,5 @@
 import streamlit as st
+import hashlib
 
 from modules.db import get_gsheet_connection, get_firestore_db, get_members_fs
 from modules.utils import generate_tuesday_dates
@@ -29,12 +30,19 @@ if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
 
-def check_login(email_input, password_input):
+def get_correct_password():
     try:
-        correct_password = st.secrets["auth"]["password"]
+        return st.secrets["auth"]["password"]
     except Exception:
-        correct_password = "Gergo2010"
-    if password_input != correct_password:
+        return "Gergo2010"
+
+
+def make_token(password):
+    return hashlib.sha256(("ropi-" + password).encode()).hexdigest()[:16]
+
+
+def check_login(email_input, password_input):
+    if password_input != get_correct_password():
         return False
     try:
         members_df = get_members_fs(fs_db)
@@ -46,14 +54,24 @@ def check_login(email_input, password_input):
         return False
 
 
+# Auto-bejelentkezés URL token alapján
+if not st.session_state.logged_in:
+    url_token = st.query_params.get("t", "")
+    if url_token and url_token == make_token(get_correct_password()):
+        st.session_state.logged_in = True
+        st.session_state.logged_in_as = "auto"
+
+
 def render_login_dialog():
     with st.sidebar.expander("🔐 Bejelentkezés", expanded=True):
         login_email = st.text_input("Email cím:", key="input_login_email")
         login_password = st.text_input("Jelszó:", type="password", key="input_login_password")
         if st.button("Belépés", type="primary", use_container_width=True):
             if check_login(login_email, login_password):
+                token = make_token(get_correct_password())
                 st.session_state.logged_in = True
                 st.session_state.logged_in_as = login_email
+                st.query_params["t"] = token
                 st.rerun()
             else:
                 st.error("Hibás email vagy jelszó!")
@@ -73,6 +91,7 @@ if st.session_state.logged_in:
         if st.button("🚪 Kijelentkezés", use_container_width=True):
             st.session_state.logged_in = False
             st.session_state.pop("logged_in_as", None)
+            st.query_params.clear()
             st.rerun()
 else:
     page = st.sidebar.radio("Menü", PUBLIC_PAGES)
