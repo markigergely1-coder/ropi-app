@@ -1,6 +1,5 @@
 import streamlit as st
 import calendar
-import qrcode
 from io import BytesIO
 from google.cloud import firestore
 
@@ -9,6 +8,7 @@ from modules.db import get_cancelled_sessions_fs
 
 
 def _generate_qr_bytes(url):
+    import qrcode
     qr = qrcode.QRCode(box_size=6, border=2)
     qr.add_data(url)
     qr.make(fit=True)
