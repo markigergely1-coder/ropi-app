@@ -4,5 +4,4 @@ google-cloud-firestore
 pandas
 pytz
 fpdf
-streamlit-js-eval
 qrcode[pil]
