@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
+from modules.config import HUNGARY_TZ
 
 from modules.db import get_attendance_rows_fs
 from modules.utils import generate_tuesday_dates, parse_date_str
@@ -8,8 +10,21 @@ from modules.utils import generate_tuesday_dates, parse_date_str
 def render_attendance_overview_page(fs_db):
     st.title("📅 Alkalmak Áttekintése")
     st.markdown("Itt ellenőrizheted a résztvevők számát és névsorát az elmúlt 8 alkalomra visszamenőleg.")
-    dates = generate_tuesday_dates(past_count=8, future_count=0)
-    selected_date_str = st.selectbox("Válassz egy dátumot az áttekintéshez:", dates)
+    dates = generate_tuesday_dates(past_count=8, future_count=1)
+
+    # Legközelebbi alkalom: ha ma kedd → ma, egyébként a jövőbeli (utolsó elem)
+    today = datetime.now(HUNGARY_TZ).date()
+    is_tuesday = today.weekday() == 1
+    today_str = today.strftime("%Y-%m-%d")
+    upcoming_str = today_str if (is_tuesday and today_str in dates) else dates[-1]
+    default_idx = dates.index(upcoming_str) if upcoming_str in dates else len(dates) - 1
+
+    selected_date_str = st.selectbox(
+        "Válassz egy dátumot az áttekintéshez:",
+        dates,
+        index=default_idx,
+        format_func=lambda d: f"{'📌 ' if d == upcoming_str else ''}{d}"
+    )
     if selected_date_str:
         selected_date = parse_date_str(selected_date_str)
         with st.spinner("Adatok betöltése a Firestore-ból..."):
