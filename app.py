@@ -10,6 +10,7 @@ from modules.pages.accounting import render_accounting_page
 from modules.pages.members import render_members_page
 from modules.pages.payments import render_payment_check_page
 from modules.pages.settings import render_settings_page
+from modules.pages.qr_page import render_qr_page
 
 st.set_page_config(page_title="Röpi App Pro", layout="wide", page_icon="🏐")
 
@@ -80,7 +81,7 @@ def render_login_dialog():
 st.sidebar.title("🏐 Röpi App Pro")
 st.sidebar.markdown("---")
 
-PUBLIC_PAGES  = ["Admin Regisztráció", "Alkalmak Áttekintése", "Adatbázis"]
+PUBLIC_PAGES  = ["Admin Regisztráció", "Alkalmak Áttekintése", "Adatbázis", "📲 Check-in QR"]
 PRIVATE_PAGES = ["Havi Elszámolás", "💳 Befizetések Ellenőrzése", "👤 Tagok & Email", "Beállítások (Kivételek)"]
 
 if st.session_state.logged_in:
@@ -120,3 +121,5 @@ elif page == "👤 Tagok & Email" and st.session_state.logged_in:
     render_members_page(fs_db, gs_client)
 elif page == "Beállítások (Kivételek)" and st.session_state.logged_in:
     render_settings_page(fs_db)
+elif page == "📲 Check-in QR":
+    render_qr_page()
