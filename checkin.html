@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Röpi Check-in 🏐</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .card {
+            background: white;
+            border-radius: 20px;
+            padding: 32px 24px;
+            max-width: 420px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 { font-size: 26px; text-align: center; margin-bottom: 4px; color: #1a1a2e; }
+        .subtitle { color: #888; text-align: center; font-size: 14px; margin-bottom: 24px; }
+        .tabs {
+            display: flex; gap: 8px; margin-bottom: 20px;
+            background: #f5f5f5; border-radius: 10px; padding: 4px;
+        }
+        .tab {
+            flex: 1; padding: 10px 8px; border: none; border-radius: 8px;
+            cursor: pointer; text-align: center; font-size: 13px;
+            background: transparent; color: #888; font-weight: 500; transition: all 0.2s;
+        }
+        .tab.active { background: white; color: #764ba2; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        label { font-size: 13px; color: #555; font-weight: 600; margin-bottom: 6px; display: block; }
+        select, input[type="text"], input[type="email"] {
+            width: 100%; padding: 13px 14px; border: 2px solid #e8e8e8;
+            border-radius: 10px; font-size: 15px; margin-bottom: 14px;
+            outline: none; transition: border-color 0.2s; color: #1a1a2e;
+            background: #fafafa; appearance: none; -webkit-appearance: none;
+        }
+        select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23888' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 12px; padding-right: 36px; background-color: #fafafa; }
+        select:focus, input:focus { border-color: #764ba2; background: white; }
+        .btn {
+            width: 100%; padding: 15px; background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white; border: none; border-radius: 10px; font-size: 16px;
+            font-weight: 700; cursor: pointer; transition: opacity 0.2s; letter-spacing: 0.3px;
+        }
+        .btn:hover { opacity: 0.9; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn.secondary {
+            background: #f0f0f0; color: #666; margin-top: 10px;
+            font-weight: 500; font-size: 14px; padding: 12px;
+        }
+        .error { color: #e53e3e; font-size: 13px; margin-bottom: 12px; padding: 10px; background: #fff5f5; border-radius: 8px; }
+        .info-box { background: #f0f4ff; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; font-size: 13px; color: #5a67d8; }
+        #loading { text-align: center; padding: 30px 0; color: #888; font-size: 15px; }
+        .big-icon { font-size: 64px; text-align: center; margin-bottom: 16px; }
+        .success-name { font-size: 24px; font-weight: 800; text-align: center; color: #1a1a2e; margin-bottom: 8px; }
+        .success-sub { text-align: center; color: #666; font-size: 15px; }
+        .success-badge { display: inline-block; background: #f0fff4; color: #276749; border: 1.5px solid #9ae6b4; border-radius: 8px; padding: 8px 16px; font-size: 14px; font-weight: 600; margin-top: 12px; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+<div class="card">
+
+    <!-- LOADING -->
+    <div id="view-loading">
+        <div style="font-size:48px;text-align:center;margin-bottom:16px">🏐</div>
+        <div id="loading">Betöltés...</div>
+    </div>
+
+    <!-- FORM: első látogatás -->
+    <div id="view-form" class="hidden">
+        <h1>🏐 Röpi Check-in</h1>
+        <p class="subtitle" id="form-date"></p>
+
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('own')">🙋 Magamnak</button>
+            <button class="tab" onclick="switchTab('guest')">👥 Vendégként</button>
+        </div>
+
+        <!-- Saját bejelentkezés -->
+        <div id="tab-own">
+            <label>Válaszd ki a neved:</label>
+            <select id="name-select" onchange="onNameChange()">
+                <option value="">-- Betöltés... --</option>
+            </select>
+            <div id="custom-fields" class="hidden">
+                <label>Teljes neved:</label>
+                <input type="text" id="custom-name" placeholder="pl. Kovács Béla" />
+                <label>Email cím <span style="font-weight:400;color:#aaa">(opcionális)</span>:</label>
+                <input type="email" id="custom-email" placeholder="kovacs.bela@gmail.com" />
+            </div>
+            <div id="own-error" class="error hidden"></div>
+            <button class="btn" onclick="checkInOwn()">✅ Bejelentkezés</button>
+        </div>
+
+        <!-- Vendég bejelentkezés -->
+        <div id="tab-guest" class="hidden">
+            <label>A te neved:</label>
+            <input type="text" id="guest-name" placeholder="pl. Vendég Péter" />
+            <label>Kinek a vendége vagy?</label>
+            <select id="host-select">
+                <option value="">-- Válassz tagot --</option>
+            </select>
+            <div id="guest-error" class="error hidden"></div>
+            <button class="btn" onclick="checkInGuest()">✅ Bejelentkezés vendégként</button>
+        </div>
+    </div>
+
+    <!-- AUTO CHECK-IN: visszatérő, még nincs bejelentkezve -->
+    <div id="view-auto" class="hidden">
+        <div class="big-icon">🏐</div>
+        <div class="success-name" id="auto-name"></div>
+        <div class="success-sub">
+            <span class="success-badge" id="auto-badge"></span>
+        </div>
+        <button class="btn secondary" onclick="undoCheckin()">↩️ Jelenlét visszavonása</button>
+    </div>
+
+    <!-- MÁR BE VAN JELENTKEZVE -->
+    <div id="view-already" class="hidden">
+        <div class="big-icon">✅</div>
+        <div class="success-name" id="already-name"></div>
+        <div class="info-box" style="text-align:center" id="already-date"></div>
+        <div class="success-sub" style="color:#888;font-size:13px">Már be vagy jelentkezve erre az alkalomra.</div>
+        <button class="btn secondary" onclick="undoCheckin()">↩️ Visszavonás</button>
+    </div>
+
+    <!-- SIKER: első regisztráció -->
+    <div id="view-success" class="hidden">
+        <div class="big-icon" id="success-icon">🏐</div>
+        <div class="success-name" id="success-name"></div>
+        <div class="success-sub">
+            <span class="success-badge" id="success-badge"></span>
+        </div>
+    </div>
+
+    <!-- HIBA -->
+    <div id="view-error" class="hidden">
+        <div class="big-icon">😕</div>
+        <div class="success-name" style="font-size:18px">Hiba történt</div>
+        <div class="error" id="error-msg" style="margin-top:16px"></div>
+        <button class="btn" onclick="location.reload()">Újra</button>
+    </div>
+
+</div>
+
+<!-- Firebase compat SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+<script>
+// ============================================================
+// KONFIGURÁCIÓ — ezt kell kitölteni
+// ============================================================
+const FIREBASE_API_KEY = "FIREBASE_API_KEY_IDE";   // ← cseréld ki!
+// ============================================================
+
+const PROJECT_ID = "attendanceapp-473208";
+
+const MAIN_NAME_LIST = [
+    "Anna Sengler","Annamária Földváry","Áron Szabó","Boti",
+    "Csanád Laczkó","Csenge Domokos","Detti Szabó","Domokos Kadosa",
+    "Dóri Békási","Flóra","Gergely Márki","Kilyénfalvi Júlia",
+    "Laci Márki","Laura Piski","Lea Plank","Linda Antal",
+    "Márki Jancsi","Máté Lajer","Máté Plank","Nóri Sásdi","Océane Olivier"
+];
+
+const MONTHS_HU = ["jan.","febr.","márc.","ápr.","máj.","jún.",
+                   "júl.","aug.","szept.","okt.","nov.","dec."];
+
+// --- Init Firebase ---
+firebase.initializeApp({ apiKey: FIREBASE_API_KEY, projectId: PROJECT_ID });
+const db = firebase.firestore();
+
+// --- Globals ---
+let eventDate = getLastTuesday();
+let currentDeviceId = null;
+let currentName = null;
+
+// --- Segédfüggvények ---
+function getLastTuesday() {
+    const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Budapest' }));
+    const day = now.getDay(); // 0=Sun,1=Mon,2=Tue,...
+    const back = (day - 2 + 7) % 7;
+    now.setDate(now.getDate() - back);
+    return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+}
+
+function fmtDate(d) {
+    const [y,m,day] = d.split('-');
+    return `${y}. ${MONTHS_HU[parseInt(m)-1]} ${parseInt(day)}. (kedd)`;
+}
+
+function getOrCreateDeviceId() {
+    let did = localStorage.getItem('ropi_device_id');
+    if (!did) {
+        did = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = Math.random()*16|0;
+            return (c==='x' ? r : (r&0x3|0x8)).toString(16);
+        });
+        localStorage.setItem('ropi_device_id', did);
+    }
+    return did;
+}
+
+function show(id) {
+    ['view-loading','view-form','view-auto','view-already','view-success','view-error']
+        .forEach(v => document.getElementById(v).classList.toggle('hidden', v !== id));
+}
+
+function showErr(msg) {
+    document.getElementById('error-msg').textContent = msg;
+    show('view-error');
+}
+
+// --- Névlista betöltése ---
+async function loadNames() {
+    const names = new Set(MAIN_NAME_LIST);
+    try {
+        const snap = await db.collection('members').get();
+        snap.forEach(d => { if(d.data().name) names.add(d.data().name); });
+    } catch(e) {}
+    return Array.from(names).sort((a,b) => a.localeCompare(b, 'hu'));
+}
+
+async function populateDropdowns() {
+    const names = await loadNames();
+    const sel = document.getElementById('name-select');
+    const host = document.getElementById('host-select');
+    sel.innerHTML = '<option value="">-- Válassz --</option><option value="__new__">➕ Nem szerepelek a listában</option>';
+    host.innerHTML = '<option value="">-- Válassz tagot --</option>';
+    names.forEach(n => {
+        sel.innerHTML += `<option value="${n}">${n}</option>`;
+        host.innerHTML += `<option value="${n}">${n}</option>`;
+    });
+}
+
+function onNameChange() {
+    const v = document.getElementById('name-select').value;
+    document.getElementById('custom-fields').classList.toggle('hidden', v !== '__new__');
+}
+
+function switchTab(tab) {
+    document.querySelectorAll('.tab').forEach((t,i) =>
+        t.classList.toggle('active', (tab==='own'&&i===0)||(tab==='guest'&&i===1)));
+    document.getElementById('tab-own').classList.toggle('hidden', tab!=='own');
+    document.getElementById('tab-guest').classList.toggle('hidden', tab!=='guest');
+}
+
+// --- Jelenlét mentése ---
+async function saveAttendance(name) {
+    const ts = new Date().toLocaleString('sv-SE', { timeZone:'Europe/Budapest' }).replace('T',' ');
+    await db.collection('attendance_records').add({
+        name, status:'Yes', timestamp:ts, event_date:eventDate, mode:'qr'
+    });
+}
+
+async function alreadyCheckedIn(name) {
+    const s = await db.collection('attendance_records')
+        .where('name','==',name).where('event_date','==',eventDate)
+        .where('mode','==','qr').limit(1).get();
+    return !s.empty;
+}
+
+// --- Visszavonás ---
+async function undoCheckin() {
+    try {
+        const snap = await db.collection('attendance_records')
+            .where('name','==',currentName).where('event_date','==',eventDate)
+            .where('mode','==','qr').get();
+        const batch = db.batch();
+        snap.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+        location.reload();
+    } catch(e) { alert('Hiba: '+e.message); }
+}
+
+// --- Saját bejelentkezés ---
+async function checkInOwn() {
+    const sel = document.getElementById('name-select');
+    const errEl = document.getElementById('own-error');
+    errEl.classList.add('hidden');
+    let name = sel.value;
+
+    if (name === '__new__') {
+        name = document.getElementById('custom-name').value.trim();
+        const email = document.getElementById('custom-email').value.trim();
+        if (!name) { errEl.textContent='Add meg a neved!'; errEl.classList.remove('hidden'); return; }
+        if (email) {
+            try { await db.collection('members').add({name, email, active:true}); } catch(e) {}
+        }
+    } else if (!name) {
+        errEl.textContent='Válassz ki egy nevet!'; errEl.classList.remove('hidden'); return;
+    }
+
+    const btn = document.querySelector('#tab-own .btn');
+    btn.disabled = true; btn.textContent = 'Mentés...';
+
+    try {
+        await db.collection('device_registrations').doc(currentDeviceId).set({
+            name, registered_at: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        await saveAttendance(name);
+        currentName = name;
+        document.getElementById('success-icon').textContent = '🏐';
+        document.getElementById('success-name').textContent = `Szia ${name}!`;
+        document.getElementById('success-badge').textContent = `✅ Jelenlét rögzítve: ${fmtDate(eventDate)}`;
+        show('view-success');
+    } catch(e) {
+        btn.disabled=false; btn.textContent='✅ Bejelentkezés';
+        errEl.textContent='Hiba: '+e.message; errEl.classList.remove('hidden');
+    }
+}
+
+// --- Vendég bejelentkezés ---
+async function checkInGuest() {
+    const gName = document.getElementById('guest-name').value.trim();
+    const host = document.getElementById('host-select').value;
+    const errEl = document.getElementById('guest-error');
+    errEl.classList.add('hidden');
+    if (!gName) { errEl.textContent='Add meg a neved!'; errEl.classList.remove('hidden'); return; }
+    if (!host) { errEl.textContent='Válaszd ki, kinek a vendége vagy!'; errEl.classList.remove('hidden'); return; }
+
+    const btn = document.querySelector('#tab-guest .btn');
+    btn.disabled=true; btn.textContent='Mentés...';
+
+    try {
+        await saveAttendance(`${host} - ${gName}`);
+        document.getElementById('success-icon').textContent = '👋';
+        document.getElementById('success-name').textContent = `Szia ${gName}!`;
+        document.getElementById('success-badge').textContent = `✅ Vendég jelenlét rögzítve: ${fmtDate(eventDate)}`;
+        show('view-success');
+    } catch(e) {
+        btn.disabled=false; btn.textContent='✅ Bejelentkezés vendégként';
+        errEl.textContent='Hiba: '+e.message; errEl.classList.remove('hidden');
+    }
+}
+
+// --- Inicializálás ---
+async function init() {
+    try {
+        currentDeviceId = getOrCreateDeviceId();
+
+        // Ismert eszköz?
+        const devDoc = await db.collection('device_registrations').doc(currentDeviceId).get();
+        if (devDoc.exists) {
+            currentName = devDoc.data().name;
+            const alreadyIn = await alreadyCheckedIn(currentName);
+            if (alreadyIn) {
+                document.getElementById('already-name').textContent = `Szia ${currentName}!`;
+                document.getElementById('already-date').textContent = `📅 ${fmtDate(eventDate)}`;
+                show('view-already');
+            } else {
+                await saveAttendance(currentName);
+                document.getElementById('auto-name').textContent = `Szia ${currentName}! 🏐`;
+                document.getElementById('auto-badge').textContent = `✅ Jelenlét rögzítve: ${fmtDate(eventDate)}`;
+                show('view-auto');
+            }
+            return;
+        }
+
+        // Ismeretlen eszköz — form megjelenítése
+        await populateDropdowns();
+        document.getElementById('form-date').textContent = `📅 ${fmtDate(eventDate)}`;
+        show('view-form');
+
+    } catch(e) {
+        showErr(e.message);
+    }
+}
+
+init();
+</script>
+</body>
+</html>

@@ -26,7 +26,7 @@ def render_settings_page(fs_db):
         try:
             checkin_url = st.secrets["app"]["checkin_url"]
         except Exception:
-            checkin_url = "https://ropi-app.streamlit.app/?checkin=1"
+            checkin_url = "https://markigergely1-coder.github.io/ropi-app/checkin.html"
         col_qr, col_info = st.columns([1, 2], vertical_alignment="center")
         with col_qr:
             st.image(_generate_qr_bytes(checkin_url), width=180)
