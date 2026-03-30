@@ -90,6 +90,12 @@
             <select id="name-select" onchange="onNameChange()">
                 <option value="">-- Betöltés... --</option>
             </select>
+            <!-- Email mező ismert névhez -->
+            <div id="own-email-field" class="hidden">
+                <label>📧 Email cím <span style="font-weight:400;color:#aaa">(opcionális)</span>:</label>
+                <input type="email" id="own-email" placeholder="pelda@gmail.com" />
+            </div>
+            <!-- Új tag mezői -->
             <div id="custom-fields" class="hidden">
                 <label>Teljes neved:</label>
                 <input type="text" id="custom-name" placeholder="pl. Kovács Béla" />
@@ -139,6 +145,7 @@
         <div class="success-sub">
             <span class="success-badge" id="success-badge"></span>
         </div>
+        <button class="btn secondary" onclick="undoCheckin()">↩️ Visszavonás</button>
     </div>
 
     <!-- HIBA -->
@@ -267,9 +274,24 @@ async function populateDropdowns() {
     });
 }
 
-function onNameChange() {
+async function onNameChange() {
     const v = document.getElementById('name-select').value;
-    document.getElementById('custom-fields').classList.toggle('hidden', v !== '__new__');
+    const isNew = v === '__new__';
+    document.getElementById('custom-fields').classList.toggle('hidden', !isNew);
+    const emailField = document.getElementById('own-email-field');
+    emailField.classList.toggle('hidden', !v || isNew);
+    if (v && !isNew) {
+        try {
+            const snap = await db.collection('members').where('name','==',v).limit(1).get();
+            if (!snap.empty) {
+                memberDocId = snap.docs[0].id;
+                document.getElementById('own-email').value = snap.docs[0].data().email || '';
+            } else {
+                memberDocId = null;
+                document.getElementById('own-email').value = '';
+            }
+        } catch(e) {}
+    }
 }
 
 function switchTab(tab) {
@@ -302,6 +324,9 @@ async function undoCheckin() {
             .where('mode','==','qr').get();
         const batch = db.batch();
         snap.forEach(d => batch.delete(d.ref));
+        if (currentDeviceId) {
+            batch.delete(db.collection('device_registrations').doc(currentDeviceId));
+        }
         await batch.commit();
         location.reload();
     } catch(e) { alert('Hiba: '+e.message); }
@@ -314,15 +339,15 @@ async function checkInOwn() {
     errEl.classList.add('hidden');
     let name = sel.value;
 
+    let ownEmail = '';
     if (name === '__new__') {
         name = document.getElementById('custom-name').value.trim();
-        const email = document.getElementById('custom-email').value.trim();
+        ownEmail = document.getElementById('custom-email').value.trim();
         if (!name) { errEl.textContent='Add meg a neved!'; errEl.classList.remove('hidden'); return; }
-        if (email) {
-            try { await db.collection('members').add({name, email, active:true}); } catch(e) {}
-        }
     } else if (!name) {
         errEl.textContent='Válassz ki egy nevet!'; errEl.classList.remove('hidden'); return;
+    } else {
+        ownEmail = document.getElementById('own-email').value.trim();
     }
 
     const btn = document.querySelector('#tab-own .btn');
@@ -333,12 +358,20 @@ async function checkInOwn() {
             name, registered_at: firebase.firestore.FieldValue.serverTimestamp()
         });
         await saveAttendance(name);
+        // Email mentése
+        if (ownEmail) {
+            if (memberDocId) {
+                await db.collection('members').doc(memberDocId).update({ email: ownEmail });
+            } else {
+                const ref = await db.collection('members').add({ name, email: ownEmail, active: true });
+                memberDocId = ref.id;
+            }
+        }
         currentName = name;
         document.getElementById('success-icon').textContent = '🏐';
         document.getElementById('success-name').textContent = `Szia ${name}!`;
         document.getElementById('success-badge').textContent = `✅ Jelenlét rögzítve: ${fmtDate(eventDate)}`;
         show('view-success');
-        await loadAndShowEmailSection(name);
     } catch(e) {
         btn.disabled=false; btn.textContent='✅ Bejelentkezés';
         errEl.textContent='Hiba: '+e.message; errEl.classList.remove('hidden');
