@@ -149,6 +149,17 @@
         <button class="btn" onclick="location.reload()">Újra</button>
     </div>
 
+    <!-- EMAIL SZEKCIÓ (check-in után jelenik meg) -->
+    <div id="email-section" class="hidden" style="margin-top:20px;border-top:1px solid #eee;padding-top:18px">
+        <label style="margin-bottom:6px">
+            📧 Email cím
+            <span id="email-missing-badge" style="font-size:11px;color:#e53e3e;font-weight:400;margin-left:4px"></span>
+        </label>
+        <input type="email" id="email-input" placeholder="pelda@gmail.com" />
+        <button class="btn" id="email-save-btn" onclick="saveEmail()">💾 Email mentése</button>
+        <div id="email-saved-msg" class="hidden" style="color:#276749;font-size:13px;text-align:center;margin-top:8px;padding:8px;background:#f0fff4;border-radius:8px">✅ Email sikeresen mentve!</div>
+    </div>
+
 </div>
 
 <!-- Firebase compat SDK -->
@@ -183,6 +194,7 @@ const db = firebase.firestore();
 let eventDate = null;
 let currentDeviceId = null;
 let currentName = null;
+let memberDocId = null;
 
 // --- Segédfüggvények ---
 function toDateStr(d) {
@@ -326,6 +338,7 @@ async function checkInOwn() {
         document.getElementById('success-name').textContent = `Szia ${name}!`;
         document.getElementById('success-badge').textContent = `✅ Jelenlét rögzítve: ${fmtDate(eventDate)}`;
         show('view-success');
+        await loadAndShowEmailSection(name);
     } catch(e) {
         btn.disabled=false; btn.textContent='✅ Bejelentkezés';
         errEl.textContent='Hiba: '+e.message; errEl.classList.remove('hidden');
@@ -356,6 +369,69 @@ async function checkInGuest() {
     }
 }
 
+// --- Email kezelés ---
+async function loadAndShowEmailSection(name) {
+    try {
+        const snap = await db.collection('members').where('name','==',name).limit(1).get();
+        const emailInput = document.getElementById('email-input');
+        const badge = document.getElementById('email-missing-badge');
+        const savedMsg = document.getElementById('email-saved-msg');
+        const saveBtn = document.getElementById('email-save-btn');
+
+        savedMsg.classList.add('hidden');
+        saveBtn.disabled = false;
+        saveBtn.textContent = '💾 Email mentése';
+
+        if (!snap.empty) {
+            memberDocId = snap.docs[0].id;
+            const email = snap.docs[0].data().email || '';
+            emailInput.value = email;
+            badge.textContent = email ? '' : '(hiányzik)';
+        } else {
+            memberDocId = null;
+            emailInput.value = '';
+            badge.textContent = '(hiányzik)';
+        }
+
+        document.getElementById('email-section').classList.remove('hidden');
+    } catch(e) {}
+}
+
+async function saveEmail() {
+    const email = document.getElementById('email-input').value.trim();
+    const badge = document.getElementById('email-missing-badge');
+    const savedMsg = document.getElementById('email-saved-msg');
+    const saveBtn = document.getElementById('email-save-btn');
+
+    if (!email) {
+        document.getElementById('email-input').focus();
+        return;
+    }
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Mentés...';
+
+    try {
+        if (memberDocId) {
+            await db.collection('members').doc(memberDocId).update({ email });
+        } else {
+            const ref = await db.collection('members').add({ name: currentName, email, active: true });
+            memberDocId = ref.id;
+        }
+        badge.textContent = '';
+        savedMsg.classList.remove('hidden');
+        saveBtn.textContent = '✅ Mentve';
+        setTimeout(() => {
+            saveBtn.disabled = false;
+            saveBtn.textContent = '💾 Email mentése';
+        }, 2500);
+    } catch(e) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '💾 Email mentése';
+        alert('Hiba: ' + e.message);
+    }
+}
+
 // --- Inicializálás ---
 async function init() {
     try {
@@ -377,6 +453,7 @@ async function init() {
                 document.getElementById('auto-badge').textContent = `✅ Jelenlét rögzítve: ${fmtDate(eventDate)}`;
                 show('view-auto');
             }
+            await loadAndShowEmailSection(currentName);
             return;
         }
 
