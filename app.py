@@ -57,7 +57,9 @@ else:
             if st.button("🚪 Kijelentkezés", use_container_width=True):
                 st.logout()
         else:
-            st.login("google")
+            if st.button("🔑 Bejelentkezés Google fiókkal",
+                         type="primary", use_container_width=True):
+                st.login("google")
 
 with st.sidebar:
     st.markdown("---")
