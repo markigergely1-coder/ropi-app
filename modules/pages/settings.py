@@ -56,9 +56,8 @@ def render_settings_page(fs_db):
                 else:
                     try:
                         fs_db.collection(FIRESTORE_CANCELLED).add({"date": date_str})
-                        st.success("Sikeresen rögzítve!")
+                        st.toast("✅ Sikeresen rögzítve!")
                         st.cache_data.clear()
-                        import time; time.sleep(1)
                         st.rerun()
                     except Exception as e:
                         st.error(f"Hiba mentéskor: {e}")

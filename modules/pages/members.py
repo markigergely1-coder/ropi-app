@@ -1,5 +1,5 @@
 import streamlit as st
-import time
+import re
 
 from modules.config import MAIN_NAME_LIST, GSHEET_NAME, MEMBERS_SHEET_NAME
 from modules.db import get_members_fs, sync_members_fs_to_gs, sync_members_gs_to_fs
@@ -30,8 +30,8 @@ def render_members_page(fs_db, gs_client):
             if st.button("💾 Mentés mindkét adatbázisba", type="primary"):
                 if not new_name or not new_email:
                     st.warning("Töltsd ki a nevet és az email-t!")
-                elif "@" not in new_email:
-                    st.warning("Érvényes email cím szükséges!")
+                elif not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', new_email):
+                    st.warning("Érvényes email cím szükséges! (pl: nev@domain.hu)")
                 else:
                     try:
                         fs_db.collection("members").add({"name": new_name, "email": new_email, "active": new_active})
@@ -43,9 +43,8 @@ def render_members_page(fs_db, gs_client):
                         else:
                             ws = ss.worksheet(MEMBERS_SHEET_NAME)
                         ws.append_row([new_name, new_email, str(new_active)])
-                        st.success(f"✅ {new_name} sikeresen hozzáadva!")
+                        st.toast(f"✅ {new_name} sikeresen hozzáadva!")
                         get_members_fs.clear()
-                        time.sleep(1)
                         st.rerun()
                     except Exception as e:
                         st.error(f"Hiba: {e}")
@@ -76,8 +75,7 @@ def render_members_page(fs_db, gs_client):
                             })
                         get_members_fs.clear()
                         ok, msg = sync_members_fs_to_gs(fs_db, gs_client)
-                        st.success(f"✅ Mentve! {msg}") if ok else st.warning(f"Firestore OK, de Sheet hiba: {msg}")
-                        time.sleep(1.5)
+                        st.toast(f"✅ Mentve! {msg}" if ok else f"⚠️ Firestore OK, de Sheet hiba: {msg}")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Hiba: {e}")
@@ -95,6 +93,5 @@ def render_members_page(fs_db, gs_client):
                 else:
                     ok, msg = sync_members_gs_to_fs(gs_client, fs_db)
                     get_members_fs.clear()
-                st.success(f"✅ {msg}") if ok else st.error(f"❌ {msg}")
-                time.sleep(1.5)
+                st.toast(f"✅ {msg}" if ok else f"❌ {msg}")
                 st.rerun()

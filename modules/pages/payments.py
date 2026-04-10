@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import time
 
 from modules.config import FIRESTORE_NAME_MAPPING, TOLERANCE
 from modules.db import get_name_mappings_fs
@@ -203,8 +202,7 @@ def render_payment_check_page(fs_db, gs_client):
                             "system_name": sys_name_select
                         })
                         get_name_mappings_fs.clear()
-                        st.success(f"✅ Mentve: **{rev_name_input.strip()}** → **{sys_name_select}**")
-                        time.sleep(1)
+                        st.toast(f"✅ Mentve: {rev_name_input.strip()} → {sys_name_select}")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Hiba: {e}")

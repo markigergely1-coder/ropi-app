@@ -1,5 +1,4 @@
 import streamlit as st
-import time
 from datetime import datetime
 
 from modules.config import MAIN_NAME_LIST, PLUS_PEOPLE_COUNT, HUNGARY_TZ
@@ -106,13 +105,11 @@ def render_admin_page(gs_client, fs_client):
                                 rows_to_add.append([f"{name} - {g_name}", "Yes", ts, target_date, "", "valós"])
                 success, msg = save_all_data(gs_client, fs_client, rows_to_add)
                 if success:
-                    st.success(msg)
+                    st.toast(msg, icon="✅")
                     reset_admin_form()
-                    time.sleep(3)
                     st.rerun()
                 else:
-                    st.warning(msg)
-                    time.sleep(4)
+                    st.toast(msg, icon="⚠️")
                     reset_admin_form()
                     st.rerun()
             except Exception as e:

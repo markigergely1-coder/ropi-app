@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import time
 from datetime import datetime
 from google.cloud import firestore
 
@@ -110,7 +109,6 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                                     except Exception as e:
                                         st.error(f"Hiba: {e}")
                             st.cache_data.clear()
-                            time.sleep(2)
                             st.rerun()
                 with col_m2:
                     if st.button("🧾 Számlák szinkronizálása", type="primary", use_container_width=True):
@@ -178,7 +176,6 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                                     else:
                                         st.info("Nincs számla a Firestore-ban.")
                                 st.cache_data.clear()
-                                time.sleep(2)
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Szinkronizálási hiba: {e}")
@@ -190,9 +187,8 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                                 get_members_fs.clear()
                             else:
                                 ok, msg = sync_members_fs_to_gs(fs_db, gs_client)
-                            st.success(f"✅ {msg}") if ok else st.error(f"❌ {msg}")
+                            st.toast(f"✅ {msg}" if ok else f"❌ {msg}")
                             st.cache_data.clear()
-                            time.sleep(2)
                             st.rerun()
 
             st.markdown("---")
@@ -236,9 +232,8 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                                         "timestamp": new_row.get("Regisztráció Időpontja", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
                                         "event_date": new_row.get("Alkalom Dátuma", ""), "mode": new_row.get("Mód", "valós")
                                     })
-                                st.success("Sikeresen frissítetted a felhő adatbázist! ✅")
+                                st.toast("✅ Sikeresen frissítetted a felhő adatbázist!")
                                 st.cache_data.clear()
-                                time.sleep(1.5)
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Mentési hiba: {e}")
@@ -279,9 +274,8 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                                     add_data = {k: v for k, v in new_row.items() if k != "ID"}
                                     if add_data:
                                         fs_db.collection(FIRESTORE_INVOICES).add(add_data)
-                                st.success("Sikeresen frissítetted a számlákat! ✅")
+                                st.toast("✅ Sikeresen frissítetted a számlákat!")
                                 st.cache_data.clear()
-                                time.sleep(1.5)
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Mentési hiba: {e}")
