@@ -116,7 +116,7 @@ def render_payment_check_page(fs_db, gs_client):
             return ""
 
         st.dataframe(
-            pd.DataFrame(results).style.applymap(color_status, subset=["Státusz"]),
+            pd.DataFrame(results).style.map(color_status, subset=["Státusz"]),
             use_container_width=True, hide_index=True
         )
 
