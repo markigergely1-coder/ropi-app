@@ -1,5 +1,4 @@
 gspread
-oauth2client
 google-cloud-firestore
 pandas
 pytz

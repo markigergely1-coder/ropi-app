@@ -1,6 +1,5 @@
 import streamlit as st
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 from google.cloud import firestore
 from google.oauth2 import service_account
 import os
@@ -25,18 +24,15 @@ def _parse_private_key(creds_dict):
 
 @st.cache_resource(ttl=3600)
 def get_gsheet_connection():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     if hasattr(st, 'secrets') and "google_creds" in st.secrets:
         try:
             creds_dict = _parse_private_key(dict(st.secrets["google_creds"]))
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-            return gspread.authorize(creds)
+            return gspread.service_account_from_dict(creds_dict)
         except Exception as e:
             st.warning(f"GSheet kapcsolódási hiba: {e}")
     if os.path.exists(CREDENTIALS_FILE):
         try:
-            creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
-            return gspread.authorize(creds)
+            return gspread.service_account(filename=CREDENTIALS_FILE)
         except Exception as e:
             st.warning(f"GSheet kapcsolódási hiba (fájl): {e}")
     return None
