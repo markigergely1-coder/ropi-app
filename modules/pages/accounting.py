@@ -76,6 +76,7 @@ def render_accounting_page(fs_db, gs_client):
             st.warning("⚠️ Nincsenek tagok az adatbázisban! Add hozzá őket a '👤 Tagok & Email' menüpontban.")
         else:
             email_preview = []
+            guest_details_map = {}
             for _, member in active_members.iterrows():
                 member_name = member["Név"]
                 own_match = df_osszesito[df_osszesito["Név"] == member_name]
@@ -87,15 +88,27 @@ def render_accounting_page(fs_db, gs_client):
                 total_count = own_count + (int(guest_rows["Részvétel száma"].sum()) if not guest_rows.empty else 0)
                 total_cost = own_cost + guest_cost
                 if total_cost > 0:
-                    guest_names = list(guest_rows["Név"].str.replace(guest_prefix, "", regex=False)) if not guest_rows.empty else []
+                    guests_list = []
+                    for _, gr in guest_rows.iterrows():
+                        guests_list.append({
+                            "name": gr["Név"].replace(guest_prefix, "", 1),
+                            "count": int(gr["Részvétel száma"]),
+                            "cost": float(gr["Fizetendő (Ft)"]),
+                        })
+                    guest_details_map[member_name] = {
+                        "own_cost": own_cost,
+                        "own_count": own_count,
+                        "guests": guests_list,
+                    }
                     email_preview.append({
                         "Név": member_name, "Email": member["Email"],
                         "Saját részvétel": own_count,
-                        "Vendégek": ", ".join(guest_names) if guest_names else "—",
+                        "Vendégek": ", ".join(g["name"] for g in guests_list) if guests_list else "—",
                         "Összes részvétel": total_count,
                         "Fizetendő (Ft)": total_cost,
                         "📧 Küldés?": True,
                     })
+            st.session_state["acc_guest_details_map"] = guest_details_map
 
             if not email_preview:
                 st.info("Ebben a hónapban egy aktív tagnak sem volt részvétele.")
@@ -122,11 +135,12 @@ def render_accounting_page(fs_db, gs_client):
                             progress = st.progress(0, text="Emailek küldése...")
                             success_count = 0
                             total = len(to_send)
+                            details_map = st.session_state.get("acc_guest_details_map", {})
                             for i, (_, row) in enumerate(to_send.iterrows()):
                                 ok = send_personal_email(
                                     to_address=row["Email"], name=row["Név"], month_name=month_name,
                                     year=year, count=row["Összes részvétel"], amount=row["Fizetendő (Ft)"],
-                                    own_count=row["Saját részvétel"], guest_names=row["Vendégek"]
+                                    guest_details=details_map.get(row["Név"])
                                 )
                                 if ok:
                                     success_count += 1

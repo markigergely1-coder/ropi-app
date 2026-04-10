@@ -214,7 +214,7 @@ def _get_smtp_connection():
         raise Exception(f"SMTP kapcsolódási hiba: {e}")
 
 
-def send_personal_email(to_address, name, month_name, year, count, amount, own_count=None, guest_names=None):
+def send_personal_email(to_address, name, month_name, year, count, amount, guest_details=None):
     try:
         server, sender = _get_smtp_connection()
         msg = MIMEMultipart("alternative")
@@ -222,9 +222,18 @@ def send_personal_email(to_address, name, month_name, year, count, amount, own_c
         msg["To"] = to_address
         msg["Subject"] = f"🏐 Röpi elszámolás — {year}. {month_name}"
         keresztnev = name.split()[0]
-        has_guests = guest_names and guest_names != "—" and guest_names != ""
-        guest_row = f"""<tr style="background:#fff8e1;"><td style="padding:10px; color:#888;">🧑‍🤝‍🧑 Vendégek</td><td style="padding:10px; text-align:right; color:#888;">{guest_names}</td></tr>""" if has_guests else ""
-        own_row = f"""<tr style="background:#f9f9f9;"><td style="padding:10px; color:#555;">👤 Saját részvétel</td><td style="padding:10px; text-align:right; color:#555;">{own_count} alkalom</td></tr>""" if (own_count is not None and has_guests) else ""
+
+        has_guests = bool(guest_details and guest_details.get("guests"))
+        detail_rows = ""
+        if has_guests:
+            own_count = guest_details["own_count"]
+            own_cost = guest_details["own_cost"]
+            detail_rows += f"""<tr style="background:#f9f9f9;"><td style="padding:10px; color:#555;">👤 Saját részvétel</td><td style="padding:10px; text-align:right; color:#555;">{own_count} alkalom</td></tr>"""
+            detail_rows += f"""<tr style="background:#f9f9f9;"><td style="padding:10px; color:#555;">👤 Saját díj</td><td style="padding:10px; text-align:right; color:#555;">{own_cost:,.0f} Ft</td></tr>"""
+            for g in guest_details["guests"]:
+                detail_rows += f"""<tr style="background:#fff8e1;"><td style="padding:10px; color:#8a6d00;">🧑‍🤝‍🧑 Vendég: {g['name']}</td><td style="padding:10px; text-align:right; color:#8a6d00;">{g['count']} alkalom</td></tr>"""
+                detail_rows += f"""<tr style="background:#fff8e1;"><td style="padding:10px; color:#8a6d00;">💸 {g['name']} díja</td><td style="padding:10px; text-align:right; color:#8a6d00;">{g['cost']:,.0f} Ft</td></tr>"""
+
         html_body = f"""<html><body style="font-family: Arial, sans-serif; color: #333; max-width: 520px; margin: auto;">
           <div style="background: #f8f8f8; border-radius: 12px; padding: 28px;">
             <h2 style="color: #4a90d9; margin-top:0;">🏐 Havi Röpi Elszámolás</h2>
@@ -232,7 +241,7 @@ def send_personal_email(to_address, name, month_name, year, count, amount, own_c
             <p>Elkészült a <strong>{year}. {month_name}</strong> havi elszámolás.</p>
             <table style="width:100%; border-collapse: collapse; margin: 16px 0;">
               <tr style="background:#4a90d9; color:white;"><th style="padding:12px; text-align:left;">Megnevezés</th><th style="padding:12px; text-align:right;">Részlet</th></tr>
-              {own_row}{guest_row}
+              {detail_rows}
               <tr style="background:#eaf4ff;"><td style="padding:12px;"><strong>📅 Összes részvétel</strong></td><td style="padding:12px; text-align:right;"><strong>{count} alkalom</strong></td></tr>
               <tr style="background:#fff;"><td style="padding:14px; font-size:1.1em;">💰 <strong>Fizetendő összeg</strong></td><td style="padding:14px; font-size:1.3em; text-align:right; color:#e74c3c;"><strong>{amount:,.0f} Ft</strong></td></tr>
             </table>
