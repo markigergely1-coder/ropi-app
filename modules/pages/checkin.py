@@ -70,15 +70,19 @@ def render_checkin_page(fs_db):
                 if st.button("↩️ Jelenlét visszavonása", type="secondary"):
                     try:
                         from modules.config import FIRESTORE_COLLECTION
-                        docs = (
+                        docs = list(
                             fs_db.collection(FIRESTORE_COLLECTION)
                             .where("name", "==", name)
                             .where("event_date", "==", event_date)
                             .where("mode", "==", "qr")
+                            .limit(5)
                             .stream()
                         )
-                        for doc in docs:
-                            doc.reference.delete()
+                        if not docs:
+                            st.info("A jelenlét már vissza lett vonva.")
+                        else:
+                            for doc in docs:
+                                doc.reference.delete()
                         st.rerun()
                     except Exception as e:
                         st.error(f"Hiba: {e}")
@@ -134,10 +138,14 @@ def render_checkin_page(fs_db):
             else:
                 name = selected
 
+            event_date = _get_event_date()
+            if _already_checked_in(fs_db, name, event_date):
+                st.info(f"✅ **{name}** már be van jelentkezve erre az alkalomra ({event_date}).")
+                st.stop()
+
             new_did = str(uuid.uuid4())
             save_device_registration(fs_db, new_did, name)
 
-            event_date = _get_event_date()
             ok, msg = _register_attendance(fs_db, name, event_date)
             if ok:
                 st.query_params["did"] = new_did
@@ -157,6 +165,10 @@ def render_checkin_page(fs_db):
 
             record_name = f"{host} - {g_name}"
             event_date = _get_event_date()
+            if _already_checked_in(fs_db, record_name, event_date):
+                st.info(f"✅ **{g_name}** ({host} vendége) már be van jelentkezve erre az alkalomra ({event_date}).")
+                st.stop()
+
             ok, msg = _register_attendance(fs_db, record_name, event_date)
             if ok:
                 st.balloons()

@@ -57,22 +57,43 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                             if sync_source == "Google Sheets":
                                 gs_rows = get_attendance_rows_gs(gs_client)
                                 if len(gs_rows) > 1:
-                                    for doc in fs_db.collection(FIRESTORE_COLLECTION).stream():
-                                        doc.reference.delete()
-                                    count = 0
+                                    new_docs = []
                                     for r in gs_rows[1:]:
-                                        try:
-                                            name = r[0] if len(r) > 0 else ""
-                                            if not name: continue
-                                            fs_db.collection(FIRESTORE_COLLECTION).add({
-                                                "name": name, "status": r[1] if len(r) > 1 else "Yes",
-                                                "timestamp": r[2] if len(r) > 2 else "",
-                                                "event_date": r[3] if len(r) > 3 else "", "mode": "valós"
-                                            })
-                                            count += 1
-                                        except Exception:
-                                            pass
-                                    st.success(f"Kész! {count} adat átmásolva a Firestore-ba.")
+                                        name = r[0] if len(r) > 0 else ""
+                                        if not name: continue
+                                        new_docs.append({
+                                            "name": name, "status": r[1] if len(r) > 1 else "Yes",
+                                            "timestamp": r[2] if len(r) > 2 else "",
+                                            "event_date": r[3] if len(r) > 3 else "", "mode": "valós"
+                                        })
+                                    try:
+                                        # 1. törlés batch-csal
+                                        del_batch = fs_db.batch()
+                                        del_count = 0
+                                        for doc in fs_db.collection(FIRESTORE_COLLECTION).stream():
+                                            del_batch.delete(doc.reference)
+                                            del_count += 1
+                                            if del_count >= 500:
+                                                del_batch.commit()
+                                                del_batch = fs_db.batch()
+                                                del_count = 0
+                                        if del_count > 0:
+                                            del_batch.commit()
+                                        # 2. írás batch-csal
+                                        ins_batch = fs_db.batch()
+                                        ins_count = 0
+                                        for data in new_docs:
+                                            ins_batch.set(fs_db.collection(FIRESTORE_COLLECTION).document(), data)
+                                            ins_count += 1
+                                            if ins_count >= 500:
+                                                ins_batch.commit()
+                                                ins_batch = fs_db.batch()
+                                                ins_count = 0
+                                        if ins_count > 0:
+                                            ins_batch.commit()
+                                        st.success(f"Kész! {len(new_docs)} adat átmásolva a Firestore-ba.")
+                                    except Exception as e:
+                                        st.error(f"Szinkronizálási hiba: {e}")
                                 else:
                                     st.info("Nincs másolható adat a Sheet-ben.")
                             else:
@@ -101,9 +122,7 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                                 if sync_source == "Google Sheets":
                                     rows_sz = szamlak_sheet.get_all_values()
                                     if len(rows_sz) > 1:
-                                        for doc in fs_db.collection(FIRESTORE_INVOICES).stream():
-                                            doc.reference.delete()
-                                        count = 0
+                                        new_invoices = []
                                         for r in rows_sz[1:]:
                                             if not r[0]: continue
                                             inv_date = parse_date_str(r[0])
@@ -114,13 +133,37 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                                                 continue
                                             t_month = 12 if inv_date.month == 1 else inv_date.month - 1
                                             t_year = inv_date.year - 1 if inv_date.month == 1 else inv_date.year
-                                            fs_db.collection(FIRESTORE_INVOICES).add({
+                                            new_invoices.append({
                                                 "inv_date": inv_date.strftime("%Y-%m-%d"), "target_year": t_year,
                                                 "target_month": t_month, "amount": amount,
                                                 "filename": r[2] if len(r) > 2 else ""
                                             })
-                                            count += 1
-                                        st.success(f"Kész! {count} számla átmásolva.")
+                                        try:
+                                            del_batch = fs_db.batch()
+                                            del_count = 0
+                                            for doc in fs_db.collection(FIRESTORE_INVOICES).stream():
+                                                del_batch.delete(doc.reference)
+                                                del_count += 1
+                                                if del_count >= 500:
+                                                    del_batch.commit()
+                                                    del_batch = fs_db.batch()
+                                                    del_count = 0
+                                            if del_count > 0:
+                                                del_batch.commit()
+                                            ins_batch = fs_db.batch()
+                                            ins_count = 0
+                                            for data in new_invoices:
+                                                ins_batch.set(fs_db.collection(FIRESTORE_INVOICES).document(), data)
+                                                ins_count += 1
+                                                if ins_count >= 500:
+                                                    ins_batch.commit()
+                                                    ins_batch = fs_db.batch()
+                                                    ins_count = 0
+                                            if ins_count > 0:
+                                                ins_batch.commit()
+                                            st.success(f"Kész! {len(new_invoices)} számla átmásolva.")
+                                        except Exception as e:
+                                            st.error(f"Szinkronizálási hiba: {e}")
                                     else:
                                         st.info("Nincs számla a Sheet-ben.")
                                 else:
