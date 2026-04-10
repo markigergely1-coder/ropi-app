@@ -1,7 +1,6 @@
 import streamlit as st
-import hashlib
 
-from modules.db import get_gsheet_connection, get_firestore_db, get_members_fs
+from modules.db import get_gsheet_connection, get_firestore_db
 from modules.utils import generate_tuesday_dates
 from modules.pages.admin import render_admin_page, reset_admin_form
 from modules.pages.overview import render_attendance_overview_page
@@ -17,7 +16,7 @@ st.set_page_config(page_title="Röpi App Pro", layout="wide", page_icon="🏐")
 gs_client = get_gsheet_connection()
 fs_db = get_firestore_db()
 
-# QR check-in oldal — publikus, login/sidebar nélkül (lazy import, hogy ne törje az appot)
+# QR check-in oldal — publikus, login/sidebar nélkül
 if st.query_params.get("checkin") == "1":
     from modules.pages.checkin import render_checkin_page
     render_checkin_page(fs_db)
@@ -27,77 +26,42 @@ if 'admin_step' not in st.session_state:
     reset_admin_form()
 if 'admin_date' not in st.session_state:
     st.session_state.admin_date = generate_tuesday_dates()[0]
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
 
+# --- Google OAuth alapú admin hozzáférés ---
+_raw = st.secrets.get("auth", {}).get("admin_emails", [])
+ADMIN_EMAILS = [e.strip().lower() for e in _raw]
 
-def get_correct_password():
-    try:
-        return st.secrets["auth"]["password"]
-    except Exception:
-        return "Gergo2010"
+logged_in = bool(st.user.is_logged_in and st.user.email.lower() in ADMIN_EMAILS)
+st.session_state.logged_in = logged_in
 
-
-def make_token(password):
-    return hashlib.sha256(("ropi-" + password).encode()).hexdigest()[:16]
-
-
-def check_login(email_input, password_input):
-    if password_input != get_correct_password():
-        return False
-    try:
-        members_df = get_members_fs(fs_db)
-        if members_df.empty:
-            return False
-        valid_emails = [e.strip().lower() for e in members_df["Email"].tolist() if e]
-        return email_input.strip().lower() in valid_emails
-    except Exception:
-        return False
-
-
-# Auto-bejelentkezés URL token alapján
-if not st.session_state.logged_in:
-    url_token = st.query_params.get("t", "")
-    if url_token and url_token == make_token(get_correct_password()):
-        st.session_state.logged_in = True
-        st.session_state.logged_in_as = "auto"
-
-
-def render_login_dialog():
-    with st.sidebar.expander("🔐 Bejelentkezés", expanded=True):
-        login_email = st.text_input("Email cím:", key="input_login_email")
-        login_password = st.text_input("Jelszó:", type="password", key="input_login_password")
-        if st.button("Belépés", type="primary", use_container_width=True):
-            if check_login(login_email, login_password):
-                token = make_token(get_correct_password())
-                st.session_state.logged_in = True
-                st.session_state.logged_in_as = login_email
-                st.query_params["t"] = token
-                st.rerun()
-            else:
-                st.error("Hibás email vagy jelszó!")
-
-
+# --- Sidebar ---
 st.sidebar.title("🏐 Röpi App Pro")
 st.sidebar.markdown("---")
 
 PUBLIC_PAGES  = ["Admin Regisztráció", "Alkalmak Áttekintése", "Adatbázis", "📲 Check-in QR"]
 PRIVATE_PAGES = ["Havi Elszámolás", "💳 Befizetések Ellenőrzése", "👤 Tagok & Email", "Beállítások (Kivételek)"]
 
-if st.session_state.logged_in:
+if logged_in:
     page = st.sidebar.radio("Menü", PUBLIC_PAGES + PRIVATE_PAGES)
     with st.sidebar:
         st.markdown("---")
-        st.markdown("👤 Bejelentkezve")
+        st.markdown(f"👤 **{st.user.name}**")
         if st.button("🚪 Kijelentkezés", use_container_width=True):
-            st.session_state.logged_in = False
-            st.session_state.pop("logged_in_as", None)
-            st.query_params.clear()
-            st.rerun()
+            st.logout()
 else:
     page = st.sidebar.radio("Menü", PUBLIC_PAGES)
-    st.sidebar.markdown("---")
-    render_login_dialog()
+    with st.sidebar:
+        st.markdown("---")
+        if st.user.is_logged_in:
+            st.warning("⛔ Nincs admin jogosultságod.")
+            if st.button("🚪 Kijelentkezés", use_container_width=True):
+                st.logout()
+        else:
+            st.button(
+                "🔑 Bejelentkezés Google fiókkal",
+                on_click=st.login, args=["google"],
+                type="primary", use_container_width=True,
+            )
 
 with st.sidebar:
     st.markdown("---")
@@ -112,14 +76,14 @@ if page == "Admin Regisztráció":
 elif page == "Alkalmak Áttekintése":
     render_attendance_overview_page(fs_db)
 elif page == "Adatbázis":
-    render_database_page(gs_client, fs_db, logged_in=st.session_state.logged_in)
-elif page == "Havi Elszámolás" and st.session_state.logged_in:
+    render_database_page(gs_client, fs_db, logged_in=logged_in)
+elif page == "Havi Elszámolás" and logged_in:
     render_accounting_page(fs_db, gs_client)
-elif page == "💳 Befizetések Ellenőrzése" and st.session_state.logged_in:
+elif page == "💳 Befizetések Ellenőrzése" and logged_in:
     render_payment_check_page(fs_db, gs_client)
-elif page == "👤 Tagok & Email" and st.session_state.logged_in:
+elif page == "👤 Tagok & Email" and logged_in:
     render_members_page(fs_db, gs_client)
-elif page == "Beállítások (Kivételek)" and st.session_state.logged_in:
+elif page == "Beállítások (Kivételek)" and logged_in:
     render_settings_page(fs_db)
 elif page == "📲 Check-in QR":
     render_qr_page()
