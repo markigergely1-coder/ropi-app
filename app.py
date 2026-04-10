@@ -28,7 +28,7 @@ if 'admin_date' not in st.session_state:
     st.session_state.admin_date = generate_tuesday_dates()[0]
 
 # --- Google OAuth alapú admin hozzáférés ---
-_raw = st.secrets.get("auth", {}).get("admin_emails", [])
+_raw = st.secrets.get("app", {}).get("admin_emails", [])
 ADMIN_EMAILS = [e.strip().lower() for e in _raw]
 
 logged_in = bool(st.user.is_logged_in and st.user.email.lower() in ADMIN_EMAILS)
