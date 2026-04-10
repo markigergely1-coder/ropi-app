@@ -133,8 +133,8 @@ def render_checkin_page(fs_db):
                             "name": name, "email": email, "active": True
                         })
                         get_members_fs.clear()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        st.warning(f"⚠️ Az email cím mentése nem sikerült, de a jelenlét rögzítve lesz: {e}")
             else:
                 name = selected
 

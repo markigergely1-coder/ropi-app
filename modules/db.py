@@ -93,7 +93,8 @@ def get_attendance_rows_gs(_client):
         return []
     try:
         return _client.open(GSHEET_NAME).sheet1.get_all_values()
-    except Exception:
+    except Exception as e:
+        st.warning(f"⚠️ Google Sheet betöltési hiba: {e}")
         return []
 
 
@@ -129,7 +130,8 @@ def get_cancelled_sessions_fs(_db):
                 if date_obj:
                     cancelled.add(date_obj)
         return cancelled
-    except Exception:
+    except Exception as e:
+        st.warning(f"⚠️ Törölt alkalmak betöltési hiba (az elszámolás pontatlan lehet): {e}")
         return set()
 
 
@@ -150,7 +152,8 @@ def get_invoices_fs(_db):
             invoices.append(d)
         invoices.sort(key=lambda x: (int(x.get('target_year', 0)), int(x.get('target_month', 0))), reverse=True)
         return invoices
-    except Exception:
+    except Exception as e:
+        st.error(f"❌ Számlák betöltési hiba: {e}")
         return []
 
 
@@ -311,7 +314,8 @@ def save_device_registration(fs_db, device_id, name):
             "registered_at": firestore.SERVER_TIMESTAMP,
         })
         return True
-    except Exception:
+    except Exception as e:
+        st.warning(f"⚠️ Eszköz regisztráció mentési hiba (legközelebb újra kell azonosítanod magad): {e}")
         return False
 
 
