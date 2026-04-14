@@ -11,6 +11,7 @@ from modules.db import (
     get_members_fs, sync_members_fs_to_gs, sync_members_gs_to_fs,
     get_legacy_totals_fs, sync_legacy_fs_to_gs, sync_legacy_gs_to_fs,
 )
+from modules.charts import render_monthly_attendance_chart, render_yearly_attendance_chart, render_top5_chart
 from modules.utils import parse_date_str, build_total_attendance
 
 
@@ -18,9 +19,9 @@ def render_database_page(gs_client, fs_db, logged_in=False):
     st.title("🗂️ Adatbázis")
 
     if logged_in:
-        tab_sheet, tab_firestore, tab_ranglista = st.tabs(["📝 Beküldött Adatok (Sheet)", "☁️ Felhő Adatok (Firestore)", "🏆 Ranglista"])
+        tab_sheet, tab_firestore, tab_diagramok, tab_ranglista = st.tabs(["📝 Beküldött Adatok (Sheet)", "☁️ Felhő Adatok (Firestore)", "📊 Statisztikák", "🏆 Ranglista"])
     else:
-        tab_firestore, tab_ranglista = st.tabs(["☁️ Felhő Adatok (Firestore)", "🏆 Ranglista"])
+        tab_firestore, tab_diagramok, tab_ranglista = st.tabs(["☁️ Felhő Adatok (Firestore)", "📊 Statisztikák", "🏆 Ranglista"])
 
     if logged_in:
         with tab_sheet:
@@ -335,6 +336,23 @@ def render_database_page(gs_client, fs_db, logged_in=False):
             else:
                 st.info("Még nincsenek legacy adatok a Firestore-ban. Használd a betöltés gombot a Szinkronizálás fül alatt!")
 
+    with tab_diagramok:
+        st.subheader("📊 Jelenléti Statisztikák")
+        df_chart_source = get_attendance_rows_fs(fs_db)
+        
+        col_cd1, col_cd2 = st.columns(2)
+        with col_cd1:
+            # We provide current year as default and some static options
+            cur_year = datetime.now().year
+            chart_year = st.selectbox("Év kiválasztása:", sorted(list(set([cur_year, 2026, 2025, 2024])), reverse=True), key="chart_ev")
+        with col_cd2:
+            chart_month = st.selectbox("Hónap kiválasztása (csak havi diagramhoz):", list(range(1, 13)), index=datetime.now().month-1, key="chart_ho")
+            
+        st.markdown("---")
+        render_monthly_attendance_chart(df_chart_source, chart_year, chart_month)
+        st.markdown("---")
+        render_yearly_attendance_chart(df_chart_source, chart_year)
+
     with tab_ranglista:
         st.subheader("Részvételi Ranglista")
         rows = get_attendance_rows_gs(gs_client)
@@ -360,6 +378,13 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                 legacy[n] = legacy.get(n, 0) + c
             data = [{"Helyezés": i, "Név": n, "Összes Részvétel": c}
                     for i, (n, c) in enumerate(sorted(legacy.items(), key=lambda x: (-x[1], x[0])), 1) if c > 0]
-            st.dataframe(data, use_container_width=True)
+            
+            tab_rl_lista, tab_rl_top5 = st.tabs(["📋 Adattábla", "🏅 Top 5 Hősök"])
+            
+            with tab_rl_lista:
+                st.dataframe(data, use_container_width=True)
+            
+            with tab_rl_top5:
+                render_top5_chart(data)
         else:
             st.warning("Nem sikerült betölteni a Google Sheets adatokat.")
