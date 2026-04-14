@@ -31,11 +31,11 @@ def render_monthly_attendance_chart(df, year, month):
     df_chart = pd.DataFrame(records).groupby("Dátum").sum().reset_index()
     df_chart.columns = ["Dátum", "Létszám (fő)"]
     
-    chart = alt.Chart(df_chart).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5, color="#4a90d9").encode(
+    chart = alt.Chart(df_chart).mark_bar(cornerRadiusEnd=5, color="#4a90d9").encode(
         x=alt.X("Dátum:N", title="Edzés Dátuma"),
         y=alt.Y("Létszám (fő):Q", title="Részvevők Száma"),
         tooltip=["Dátum", "Létszám (fő)"]
-    ).properties(height=350).interactive()
+    ).properties(height=350)
     
     text = chart.mark_text(
         align='center',
@@ -100,7 +100,7 @@ def render_yearly_attendance_chart(df, year):
         x=alt.X("Hónap:N", sort=alt.EncodingSortField(field="Hónap Sorszám", order="ascending"), title="")
     )
 
-    bar = base.mark_bar(opacity=0.7, color="#3498db", cornerRadiusTopLeft=5, cornerRadiusTopRight=5).encode(
+    bar = base.mark_bar(opacity=0.7, color="#3498db", cornerRadiusEnd=5).encode(
         y=alt.Y("Összes Részvétel:Q", title="Összes Részvétel"),
         tooltip=["Hónap", "Összes Részvétel", "Átlagos Részvétel"]
     )
@@ -112,7 +112,7 @@ def render_yearly_attendance_chart(df, year):
 
     final_chart = alt.layer(bar, line).resolve_scale(
         y='independent'
-    ).properties(height=400).interactive()
+    ).properties(height=400)
 
     st.altair_chart(final_chart, use_container_width=True)
 
