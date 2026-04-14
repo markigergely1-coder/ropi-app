@@ -353,52 +353,7 @@ def get_legacy_totals_fs(_db):
         return []
 
 
-def import_legacy_data_to_db(fs_db, gs_client):
-    from modules.config import LEGACY_ATTENDANCE_TOTALS, YEARLY_LEGACY_TOTALS
-    names = set(LEGACY_ATTENDANCE_TOTALS.keys())
-    for yr, y_dict in YEARLY_LEGACY_TOTALS.items():
-        names.update(y_dict.keys())
-    
-    docs_to_insert = []
-    for name in names:
-        record = {
-            "name": name,
-            "total_all_time": LEGACY_ATTENDANCE_TOTALS.get(name, 0),
-            "year_2024": YEARLY_LEGACY_TOTALS.get(2024, {}).get(name, 0),
-            "year_2025": YEARLY_LEGACY_TOTALS.get(2025, {}).get(name, 0)
-        }
-        docs_to_insert.append(record)
-        
-    try:
-        if fs_db:
-            batch = fs_db.batch()
-            for doc in fs_db.collection(FIRESTORE_LEGACY).stream():
-                batch.delete(doc.reference)
-            batch.commit()
-            
-            batch = fs_db.batch()
-            for rec in docs_to_insert:
-                doc_id = rec["name"].replace(" ", "_")
-                doc_ref = fs_db.collection(FIRESTORE_LEGACY).document(doc_id)
-                batch.set(doc_ref, rec)
-            batch.commit()
-            
-        if gs_client:
-            ss = gs_client.open(GSHEET_NAME)
-            sheet_titles = [w.title for w in ss.worksheets()]
-            if LEGACY_SHEET_NAME not in sheet_titles:
-                ws = ss.add_worksheet(title=LEGACY_SHEET_NAME, rows=100, cols=4)
-            else:
-                ws = ss.worksheet(LEGACY_SHEET_NAME)
-            ws.clear()
-            rows = [["Név", "Összes (All time)", "2024", "2025"]]
-            for rec in docs_to_insert:
-                rows.append([rec["name"], rec["total_all_time"], rec["year_2024"], rec["year_2025"]])
-            ws.append_rows(rows, value_input_option="USER_ENTERED")
-            
-        return True, f"Sikeresen importálva {len(docs_to_insert)} legacy rekord a db-be."
-    except Exception as e:
-        return False, f"Hiba az importálás során: {e}"
+
 
 
 def sync_legacy_fs_to_gs(fs_db, gs_client):
@@ -413,9 +368,9 @@ def sync_legacy_fs_to_gs(fs_db, gs_client):
         else:
             ws = ss.worksheet(LEGACY_SHEET_NAME)
         ws.clear()
-        rows = [["Név", "Összes (All time)", "2024", "2025"]]
+        rows = [["Név", "Összes (All time)", "2024", "2025", "2026"]]
         for rec in data:
-            rows.append([rec.get("name", ""), rec.get("total_all_time", 0), rec.get("year_2024", 0), rec.get("year_2025", 0)])
+            rows.append([rec.get("name", ""), rec.get("total_all_time", 0), rec.get("year_2024", 0), rec.get("year_2025", 0), rec.get("year_2026", 0)])
         ws.append_rows(rows, value_input_option="USER_ENTERED")
         return True, f"{len(data)} legacy rekord szinkronizálva a Sheet-be."
     except Exception as e:
@@ -437,7 +392,8 @@ def sync_legacy_gs_to_fs(gs_client, fs_db):
                 "name": r[0],
                 "total_all_time": int(r[1]) if len(r) > 1 and r[1] else 0,
                 "year_2024": int(r[2]) if len(r) > 2 and r[2] else 0,
-                "year_2025": int(r[3]) if len(r) > 3 and r[3] else 0
+                "year_2025": int(r[3]) if len(r) > 3 and r[3] else 0,
+                "year_2026": int(r[4]) if len(r) > 4 and r[4] else 0
             })
             
         batch = fs_db.batch()

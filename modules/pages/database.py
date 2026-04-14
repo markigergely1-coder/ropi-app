@@ -4,12 +4,12 @@ from datetime import datetime
 from google.cloud import firestore
 
 from modules.config import (
-    FIRESTORE_COLLECTION, FIRESTORE_INVOICES, GSHEET_NAME, LEGACY_ATTENDANCE_TOTALS, YEARLY_LEGACY_TOTALS, FIRESTORE_LEGACY,
+    FIRESTORE_COLLECTION, FIRESTORE_INVOICES, GSHEET_NAME, FIRESTORE_LEGACY,
 )
 from modules.db import (
     get_attendance_rows_gs, get_attendance_rows_fs, get_invoices_fs,
     get_members_fs, sync_members_fs_to_gs, sync_members_gs_to_fs,
-    get_legacy_totals_fs, import_legacy_data_to_db, sync_legacy_fs_to_gs, sync_legacy_gs_to_fs,
+    get_legacy_totals_fs, sync_legacy_fs_to_gs, sync_legacy_gs_to_fs,
 )
 from modules.utils import parse_date_str, build_total_attendance
 
@@ -193,24 +193,15 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                             st.rerun()
 
                 st.markdown("---")
-                col_n1, col_n2 = st.columns(2)
-                with col_n1:
-                    if st.button("🏛️ Legacy db szinkronizálása", type="primary", use_container_width=True):
-                        with st.spinner("Folyamatban..."):
-                            if sync_source == "Google Sheets":
-                                ok, msg = sync_legacy_gs_to_fs(gs_client, fs_db)
-                            else:
-                                ok, msg = sync_legacy_fs_to_gs(fs_db, gs_client)
-                            st.toast(f"✅ {msg}" if ok else f"❌ {msg}")
-                            st.cache_data.clear()
-                            st.rerun()
-                with col_n2:
-                    if st.button("⚡ Legacy betöltése (config-ból)", use_container_width=True):
-                        with st.spinner("Importálás..."):
-                            ok, msg = import_legacy_data_to_db(fs_db, gs_client)
-                            st.toast(f"✅ {msg}" if ok else f"❌ {msg}")
-                            st.cache_data.clear()
-                            st.rerun()
+                if st.button("🏛️ Legacy db szinkronizálása", type="primary", use_container_width=True):
+                    with st.spinner("Folyamatban..."):
+                        if sync_source == "Google Sheets":
+                            ok, msg = sync_legacy_gs_to_fs(gs_client, fs_db)
+                        else:
+                            ok, msg = sync_legacy_fs_to_gs(fs_db, gs_client)
+                        st.toast(f"✅ {msg}" if ok else f"❌ {msg}")
+                        st.cache_data.clear()
+                        st.rerun()
 
             st.markdown("---")
             view_selection = st.radio("Mit szeretnél megtekinteni/szerkeszteni?",
@@ -349,7 +340,7 @@ def render_database_page(gs_client, fs_db, logged_in=False):
         rows = get_attendance_rows_gs(gs_client)
         legacy_data_fs = get_legacy_totals_fs(fs_db)
         if rows:
-            v = st.selectbox("Év kiválasztása:", ["All time", "2024", "2025"], key="ranglista_ev")
+            v = st.selectbox("Év kiválasztása:", ["All time", "2024", "2025", "2026"], key="ranglista_ev")
             totals = build_total_attendance(rows, int(v) if v != "All time" else None)
             
             legacy = {}
@@ -362,6 +353,8 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                     legacy[name] = rec.get("year_2024", 0)
                 elif v == "2025":
                     legacy[name] = rec.get("year_2025", 0)
+                elif v == "2026":
+                    legacy[name] = rec.get("year_2026", 0)
 
             for n, c in totals.items():
                 legacy[n] = legacy.get(n, 0) + c
