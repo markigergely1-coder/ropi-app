@@ -11,6 +11,8 @@ MEMBERS_SHEET_NAME = "Tagok"
 FIRESTORE_NAME_MAPPING = "revolut_name_mapping"
 FIRESTORE_SETTLEMENTS = "settlements"
 FIRESTORE_DEVICES = "device_registrations"
+FIRESTORE_LEGACY = "legacy_attendance"
+LEGACY_SHEET_NAME = "Legacy_Totals"
 TOLERANCE = 500  # Ft
 
 MAIN_NAME_LIST = [

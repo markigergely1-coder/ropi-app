@@ -9,7 +9,7 @@ import pandas as pd
 from modules.config import (
     CREDENTIALS_FILE, GSHEET_NAME, FIRESTORE_COLLECTION, FIRESTORE_INVOICES,
     FIRESTORE_CANCELLED, FIRESTORE_MEMBERS, MEMBERS_SHEET_NAME, FIRESTORE_NAME_MAPPING,
-    FIRESTORE_SETTLEMENTS, FIRESTORE_DEVICES,
+    FIRESTORE_SETTLEMENTS, FIRESTORE_DEVICES, FIRESTORE_LEGACY, LEGACY_SHEET_NAME,
 )
 
 
@@ -335,3 +335,122 @@ def get_name_mappings_fs(_db):
         return mapping
     except Exception:
         return {}
+
+
+@st.cache_data(ttl=300)
+def get_legacy_totals_fs(_db):
+    if _db is None:
+        return []
+    try:
+        docs = _db.collection(FIRESTORE_LEGACY).stream()
+        data = []
+        for doc in docs:
+            d = doc.to_dict()
+            data.append(d)
+        return data
+    except Exception as e:
+        st.error(f"Hiba a legacy adatok betöltésekor: {e}")
+        return []
+
+
+def import_legacy_data_to_db(fs_db, gs_client):
+    from modules.config import LEGACY_ATTENDANCE_TOTALS, YEARLY_LEGACY_TOTALS
+    names = set(LEGACY_ATTENDANCE_TOTALS.keys())
+    for yr, y_dict in YEARLY_LEGACY_TOTALS.items():
+        names.update(y_dict.keys())
+    
+    docs_to_insert = []
+    for name in names:
+        record = {
+            "name": name,
+            "total_all_time": LEGACY_ATTENDANCE_TOTALS.get(name, 0),
+            "year_2024": YEARLY_LEGACY_TOTALS.get(2024, {}).get(name, 0),
+            "year_2025": YEARLY_LEGACY_TOTALS.get(2025, {}).get(name, 0)
+        }
+        docs_to_insert.append(record)
+        
+    try:
+        if fs_db:
+            batch = fs_db.batch()
+            for doc in fs_db.collection(FIRESTORE_LEGACY).stream():
+                batch.delete(doc.reference)
+            batch.commit()
+            
+            batch = fs_db.batch()
+            for rec in docs_to_insert:
+                doc_id = rec["name"].replace(" ", "_")
+                doc_ref = fs_db.collection(FIRESTORE_LEGACY).document(doc_id)
+                batch.set(doc_ref, rec)
+            batch.commit()
+            
+        if gs_client:
+            ss = gs_client.open(GSHEET_NAME)
+            sheet_titles = [w.title for w in ss.worksheets()]
+            if LEGACY_SHEET_NAME not in sheet_titles:
+                ws = ss.add_worksheet(title=LEGACY_SHEET_NAME, rows=100, cols=4)
+            else:
+                ws = ss.worksheet(LEGACY_SHEET_NAME)
+            ws.clear()
+            rows = [["Név", "Összes (All time)", "2024", "2025"]]
+            for rec in docs_to_insert:
+                rows.append([rec["name"], rec["total_all_time"], rec["year_2024"], rec["year_2025"]])
+            ws.append_rows(rows, value_input_option="USER_ENTERED")
+            
+        return True, f"Sikeresen importálva {len(docs_to_insert)} legacy rekord a db-be."
+    except Exception as e:
+        return False, f"Hiba az importálás során: {e}"
+
+
+def sync_legacy_fs_to_gs(fs_db, gs_client):
+    data = get_legacy_totals_fs(fs_db)
+    if not data:
+        return False, "Nincs adat a Firestore-ban."
+    try:
+        ss = gs_client.open(GSHEET_NAME)
+        sheet_titles = [w.title for w in ss.worksheets()]
+        if LEGACY_SHEET_NAME not in sheet_titles:
+            ws = ss.add_worksheet(title=LEGACY_SHEET_NAME, rows=100, cols=4)
+        else:
+            ws = ss.worksheet(LEGACY_SHEET_NAME)
+        ws.clear()
+        rows = [["Név", "Összes (All time)", "2024", "2025"]]
+        for rec in data:
+            rows.append([rec.get("name", ""), rec.get("total_all_time", 0), rec.get("year_2024", 0), rec.get("year_2025", 0)])
+        ws.append_rows(rows, value_input_option="USER_ENTERED")
+        return True, f"{len(data)} legacy rekord szinkronizálva a Sheet-be."
+    except Exception as e:
+        return False, str(e)
+
+
+def sync_legacy_gs_to_fs(gs_client, fs_db):
+    try:
+        ss = gs_client.open(GSHEET_NAME)
+        ws = ss.worksheet(LEGACY_SHEET_NAME)
+        rows = ws.get_all_values()
+        if len(rows) < 2:
+            return False, "Nincs adat a Sheet-ben."
+            
+        docs_to_insert = []
+        for r in rows[1:]:
+            if not r[0]: continue
+            docs_to_insert.append({
+                "name": r[0],
+                "total_all_time": int(r[1]) if len(r) > 1 and r[1] else 0,
+                "year_2024": int(r[2]) if len(r) > 2 and r[2] else 0,
+                "year_2025": int(r[3]) if len(r) > 3 and r[3] else 0
+            })
+            
+        batch = fs_db.batch()
+        for doc in fs_db.collection(FIRESTORE_LEGACY).stream():
+            batch.delete(doc.reference)
+        batch.commit()
+        
+        batch = fs_db.batch()
+        for rec in docs_to_insert:
+            doc_id = rec["name"].replace(" ", "_")
+            doc_ref = fs_db.collection(FIRESTORE_LEGACY).document(doc_id)
+            batch.set(doc_ref, rec)
+        batch.commit()
+        return True, f"{len(docs_to_insert)} legacy rekord szinkronizálva a Firestore-ba."
+    except Exception as e:
+        return False, str(e)

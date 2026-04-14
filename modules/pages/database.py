@@ -4,11 +4,12 @@ from datetime import datetime
 from google.cloud import firestore
 
 from modules.config import (
-    FIRESTORE_COLLECTION, FIRESTORE_INVOICES, GSHEET_NAME, LEGACY_ATTENDANCE_TOTALS, YEARLY_LEGACY_TOTALS,
+    FIRESTORE_COLLECTION, FIRESTORE_INVOICES, GSHEET_NAME, LEGACY_ATTENDANCE_TOTALS, YEARLY_LEGACY_TOTALS, FIRESTORE_LEGACY,
 )
 from modules.db import (
     get_attendance_rows_gs, get_attendance_rows_fs, get_invoices_fs,
     get_members_fs, sync_members_fs_to_gs, sync_members_gs_to_fs,
+    get_legacy_totals_fs, import_legacy_data_to_db, sync_legacy_fs_to_gs, sync_legacy_gs_to_fs,
 )
 from modules.utils import parse_date_str, build_total_attendance
 
@@ -191,9 +192,29 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                             st.cache_data.clear()
                             st.rerun()
 
+                st.markdown("---")
+                col_n1, col_n2 = st.columns(2)
+                with col_n1:
+                    if st.button("🏛️ Legacy db szinkronizálása", type="primary", use_container_width=True):
+                        with st.spinner("Folyamatban..."):
+                            if sync_source == "Google Sheets":
+                                ok, msg = sync_legacy_gs_to_fs(gs_client, fs_db)
+                            else:
+                                ok, msg = sync_legacy_fs_to_gs(fs_db, gs_client)
+                            st.toast(f"✅ {msg}" if ok else f"❌ {msg}")
+                            st.cache_data.clear()
+                            st.rerun()
+                with col_n2:
+                    if st.button("⚡ Legacy betöltése (config-ból)", use_container_width=True):
+                        with st.spinner("Importálás..."):
+                            ok, msg = import_legacy_data_to_db(fs_db, gs_client)
+                            st.toast(f"✅ {msg}" if ok else f"❌ {msg}")
+                            st.cache_data.clear()
+                            st.rerun()
+
             st.markdown("---")
             view_selection = st.radio("Mit szeretnél megtekinteni/szerkeszteni?",
-                                      ["👥 Jelenléti adatok", "🧾 Számlák"], horizontal=True, key="db_view_sel")
+                                      ["👥 Jelenléti adatok", "🧾 Számlák", "🏛️ Legacy Adatok"], horizontal=True, key="db_view_sel")
             st.markdown("---")
         else:
             view_selection = "👥 Jelenléti adatok"
@@ -285,18 +306,67 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                     st.dataframe(df_inv.drop(columns=["ID"]), use_container_width=True)
             else:
                 st.info("Még nincsenek számlák a Firestore adatbázisban.")
+                
+        elif view_selection == "🏛️ Legacy Adatok" and logged_in:
+            legacy_data_fs = get_legacy_totals_fs(fs_db)
+            if legacy_data_fs:
+                df_leg = pd.DataFrame(legacy_data_fs)
+                edit_mode_leg = st.toggle("✏️ Legacy Adatok szerkesztése", key="db_leg_toggle")
+                df_leg = df_leg.sort_values(by="name").reset_index(drop=True)
+                if edit_mode_leg:
+                    st.info("💡 Kattints duplán a cellákra a szerkesztéshez! A tagnév (name) módosítása vagy törlése megengedett.")
+                    st.data_editor(df_leg, key="db_leg_editor", num_rows="dynamic", use_container_width=True)
+                    if st.button("💾 Legacy mentése a felhőbe", type="primary", key="db_leg_save_btn"):
+                        changes = st.session_state["db_leg_editor"]
+                        if changes.get("edited_rows") or changes.get("added_rows") or changes.get("deleted_rows"):
+                            try:
+                                for row_idx in changes.get("deleted_rows", []):
+                                    doc_id = str(df_leg.iloc[row_idx]["name"]).replace(" ", "_")
+                                    fs_db.collection(FIRESTORE_LEGACY).document(doc_id).delete()
+                                for row_idx, edits in changes.get("edited_rows", {}).items():
+                                    orig_name = str(df_leg.iloc[row_idx]["name"])
+                                    doc_id = orig_name.replace(" ", "_")
+                                    if edits:
+                                        fs_db.collection(FIRESTORE_LEGACY).document(doc_id).update(edits)
+                                for new_row in changes.get("added_rows", []):
+                                    if "name" in new_row and new_row["name"]:
+                                        doc_id = str(new_row["name"]).replace(" ", "_")
+                                        fs_db.collection(FIRESTORE_LEGACY).document(doc_id).set(new_row)
+                                st.toast("✅ Sikeresen frissítetted a legacy adatokat!")
+                                st.cache_data.clear()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Mentési hiba: {e}")
+                        else:
+                            st.info("Nem történt változtatás.")
+                else:
+                    st.dataframe(df_leg, use_container_width=True)
+            else:
+                st.info("Még nincsenek legacy adatok a Firestore-ban. Használd a betöltés gombot a Szinkronizálás fül alatt!")
 
     with tab_ranglista:
         st.subheader("Részvételi Ranglista")
         rows = get_attendance_rows_gs(gs_client)
+        legacy_data_fs = get_legacy_totals_fs(fs_db)
         if rows:
             v = st.selectbox("Év kiválasztása:", ["All time", "2024", "2025"], key="ranglista_ev")
             totals = build_total_attendance(rows, int(v) if v != "All time" else None)
-            legacy = dict(LEGACY_ATTENDANCE_TOTALS) if v == "All time" else dict(YEARLY_LEGACY_TOTALS.get(int(v), {}))
+            
+            legacy = {}
+            for rec in legacy_data_fs:
+                name = rec.get("name", "")
+                if not name: continue
+                if v == "All time":
+                    legacy[name] = rec.get("total_all_time", 0)
+                elif v == "2024":
+                    legacy[name] = rec.get("year_2024", 0)
+                elif v == "2025":
+                    legacy[name] = rec.get("year_2025", 0)
+
             for n, c in totals.items():
                 legacy[n] = legacy.get(n, 0) + c
             data = [{"Helyezés": i, "Név": n, "Összes Részvétel": c}
-                    for i, (n, c) in enumerate(sorted(legacy.items(), key=lambda x: (-x[1], x[0])), 1)]
+                    for i, (n, c) in enumerate(sorted(legacy.items(), key=lambda x: (-x[1], x[0])), 1) if c > 0]
             st.dataframe(data, use_container_width=True)
         else:
             st.warning("Nem sikerült betölteni a Google Sheets adatokat.")
