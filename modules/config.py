@@ -13,6 +13,8 @@ FIRESTORE_SETTLEMENTS = "settlements"
 FIRESTORE_DEVICES = "device_registrations"
 FIRESTORE_LEGACY = "legacy_attendance"
 LEGACY_SHEET_NAME = "Legacy_Totals"
+FIRESTORE_HISTORICAL = "historical_session_totals"
+HISTORICAL_SHEET_NAME = "Old_Sessions_Totals"
 TOLERANCE = 500  # Ft
 
 MAIN_NAME_LIST = [

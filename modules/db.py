@@ -10,6 +10,7 @@ from modules.config import (
     CREDENTIALS_FILE, GSHEET_NAME, FIRESTORE_COLLECTION, FIRESTORE_INVOICES,
     FIRESTORE_CANCELLED, FIRESTORE_MEMBERS, MEMBERS_SHEET_NAME, FIRESTORE_NAME_MAPPING,
     FIRESTORE_SETTLEMENTS, FIRESTORE_DEVICES, FIRESTORE_LEGACY, LEGACY_SHEET_NAME,
+    FIRESTORE_HISTORICAL, HISTORICAL_SHEET_NAME
 )
 
 
@@ -410,3 +411,97 @@ def sync_legacy_gs_to_fs(gs_client, fs_db):
         return True, f"{len(docs_to_insert)} legacy rekord szinkronizálva a Firestore-ba."
     except Exception as e:
         return False, str(e)
+
+
+@st.cache_data(ttl=300)
+def get_historical_stats_fs(_db):
+    if _db is None:
+        return []
+    try:
+        docs = _db.collection(FIRESTORE_HISTORICAL).stream()
+        data = []
+        for doc in docs:
+            d = doc.to_dict()
+            # doc id is date string, data has "date", "total"
+            if "date" in d and "total" in d:
+                data.append({"date": d["date"], "total": d["total"]})
+        return data
+    except Exception as e:
+        st.error(f"Hiba a historikus adatok betöltésekor: {e}")
+        return []
+
+
+def import_historical_stats_to_db(fs_db, gs_client):
+    try:
+        if not os.path.exists('Röplabda jelenlét.xlsx'):
+            return False, "Nem található a 'Röplabda jelenlét.xlsx' fájl a gyökérkönyvtárban."
+            
+        import pandas as pd
+        from datetime import datetime
+        
+        df = pd.read_excel('Röplabda jelenlét.xlsx')
+        col_date = df.columns[0]
+        if len(df.columns) <= 24:
+            return False, "A fájl nem tartalmazza a várt 25 oszlopot (az Y oszlop hiányzik)."
+            
+        col_total = df.columns[24]
+        
+        historical_data = []
+        for i in range(len(df)):
+            dt_val = df.iloc[i][col_date]
+            tot_val = df.iloc[i][col_total]
+            
+            if pd.isna(dt_val) or pd.isna(tot_val):
+                continue
+                
+            if isinstance(dt_val, str):
+                try:
+                    dt_obj = datetime.strptime(str(dt_val)[:10], "%Y-%m-%d")
+                except:
+                    continue
+            elif isinstance(dt_val, datetime) or hasattr(dt_val, "strftime"):
+                dt_obj = dt_val
+            else:
+                continue
+                
+            try:
+                total_num = int(float(str(tot_val)))
+            except:
+                total_num = 0
+                
+            if total_num > 0:
+                historical_data.append({
+                    "date": dt_obj.strftime("%Y-%m-%d"),
+                    "total": total_num
+                })
+                
+        historical_data.sort(key=lambda x: x["date"])
+        
+        if fs_db:
+            batch = fs_db.batch()
+            for doc in fs_db.collection(FIRESTORE_HISTORICAL).stream():
+                batch.delete(doc.reference)
+            batch.commit()
+            
+            batch = fs_db.batch()
+            for h in historical_data:
+                doc_ref = fs_db.collection(FIRESTORE_HISTORICAL).document(h["date"])
+                batch.set(doc_ref, h)
+            batch.commit()
+            
+        if gs_client:
+            ss = gs_client.open(GSHEET_NAME)
+            sheet_titles = [w.title for w in ss.worksheets()]
+            if HISTORICAL_SHEET_NAME not in sheet_titles:
+                ws = ss.add_worksheet(title=HISTORICAL_SHEET_NAME, rows=max(100, len(historical_data)+10), cols=2)
+            else:
+                ws = ss.worksheet(HISTORICAL_SHEET_NAME)
+            ws.clear()
+            rows = [["Dátum", "Összes Részvétel"]]
+            for h in historical_data:
+                rows.append([h["date"], h["total"]])
+            ws.append_rows(rows, value_input_option="USER_ENTERED")
+            
+        return True, f"Sikeresen beolvasva és szinkronizálva {len(historical_data)} régi nap!"
+    except Exception as e:
+        return False, f"Hiba az Excel importkor: {e}"

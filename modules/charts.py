@@ -3,17 +3,14 @@ import pandas as pd
 import altair as alt
 from datetime import datetime
 
-def render_monthly_attendance_chart(df, year, month):
+def render_monthly_attendance_chart(df, historical_stats, year, month):
     """
     Renders a bar chart showing attendance per session in a given month.
     """
     st.markdown(f"#### 📅 Alkalmankénti Jelenlét ({year}. {month:02d}.)")
     
-    if df is None or df.empty:
-        st.info("Nincs elérhető jelenléti adat.")
-        return
-
     records = []
+    active_days = set()
     for _, row in df.iterrows():
         date_val = str(row.get("Alkalom Dátuma", "")).strip()
         from modules.utils import parse_date_str
@@ -22,10 +19,21 @@ def render_monthly_attendance_chart(df, year, month):
         is_coming = str(row.get("Jön-e", "")).strip()
         
         if dt and dt.year == year and dt.month == month and is_coming == "Yes":
-            records.append({"Dátum": dt.strftime("%Y-%m-%d"), "Jelenlét": 1})
+            date_str = dt.strftime("%Y-%m-%d")
+            records.append({"Dátum": date_str, "Jelenlét": 1})
+            active_days.add(date_str)
             
+    # Add historical stats if they don't overlap with active data
+    if historical_stats:
+        for hs in historical_stats:
+            h_dt = datetime.strptime(hs["date"], "%Y-%m-%d")
+            if h_dt.year == year and h_dt.month == month:
+                if hs["date"] not in active_days:
+                    records.append({"Dátum": hs["date"], "Jelenlét": hs["total"]})
+                    active_days.add(hs["date"])
+                    
     if not records:
-        st.info(f"Nem találtunk aktív 'Yes' jelenlétet a {year}/{month} időszakban.")
+        st.info(f"Nem találtunk aktív 'Yes' jelenlétet vagy statisztikát a {year}/{month} időszakban.")
         return
         
     df_chart = pd.DataFrame(records).groupby("Dátum").sum().reset_index()
@@ -49,16 +57,12 @@ def render_monthly_attendance_chart(df, year, month):
     st.altair_chart(chart + text, use_container_width=True)
 
 
-def render_yearly_attendance_chart(df, year):
+def render_yearly_attendance_chart(df, historical_stats, year):
     """
     Renders a bar/line chart showing cumulative attendance per month in a year.
     Plus average attendance per session.
     """
     st.markdown(f"#### 📈 Éves Kumulált Jelenlét és Átlag ({year})")
-    
-    if df is None or df.empty:
-        st.info("Nincs elérhető jelenléti adat.")
-        return
 
     month_names = ["Január", "Február", "Március", "Április", "Május", "Június", 
                    "Július", "Augusztus", "Szeptember", "Október", "November", "December"]
@@ -73,9 +77,20 @@ def render_yearly_attendance_chart(df, year):
         is_coming = str(row.get("Jön-e", "")).strip()
         
         if dt and dt.year == year:
-            monthly_stats[dt.month]["sessions"].add(dt.strftime("%Y-%m-%d"))
+            date_str = dt.strftime("%Y-%m-%d")
+            monthly_stats[dt.month]["sessions"].add(date_str)
             if is_coming == "Yes":
                 monthly_stats[dt.month]["total"] += 1
+                
+    # Merge historical stats
+    if historical_stats:
+        for hs in historical_stats:
+            h_dt = datetime.strptime(hs["date"], "%Y-%m-%d")
+            if h_dt.year == year:
+                # Avoid overlap
+                if hs["date"] not in monthly_stats[h_dt.month]["sessions"]:
+                    monthly_stats[h_dt.month]["sessions"].add(hs["date"])
+                    monthly_stats[h_dt.month]["total"] += hs["total"]
                 
     chart_data = []
     for m in range(1, 13):

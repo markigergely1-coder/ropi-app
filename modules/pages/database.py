@@ -10,6 +10,7 @@ from modules.db import (
     get_attendance_rows_gs, get_attendance_rows_fs, get_invoices_fs,
     get_members_fs, sync_members_fs_to_gs, sync_members_gs_to_fs,
     get_legacy_totals_fs, sync_legacy_fs_to_gs, sync_legacy_gs_to_fs,
+    get_historical_stats_fs, import_historical_stats_to_db
 )
 from modules.charts import render_monthly_attendance_chart, render_yearly_attendance_chart, render_top5_chart
 from modules.utils import parse_date_str, build_total_attendance
@@ -194,15 +195,24 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                             st.rerun()
 
                 st.markdown("---")
-                if st.button("🏛️ Legacy db szinkronizálása", type="primary", use_container_width=True):
-                    with st.spinner("Folyamatban..."):
-                        if sync_source == "Google Sheets":
-                            ok, msg = sync_legacy_gs_to_fs(gs_client, fs_db)
-                        else:
-                            ok, msg = sync_legacy_fs_to_gs(fs_db, gs_client)
-                        st.toast(f"✅ {msg}" if ok else f"❌ {msg}")
-                        st.cache_data.clear()
-                        st.rerun()
+                col_n1, col_n2 = st.columns(2)
+                with col_n1:
+                    if st.button("🏛️ Legacy db szinkronizálása", type="primary", use_container_width=True):
+                        with st.spinner("Folyamatban..."):
+                            if sync_source == "Google Sheets":
+                                ok, msg = sync_legacy_gs_to_fs(gs_client, fs_db)
+                            else:
+                                ok, msg = sync_legacy_fs_to_gs(fs_db, gs_client)
+                            st.toast(f"✅ {msg}" if ok else f"❌ {msg}")
+                            st.cache_data.clear()
+                            st.rerun()
+                with col_n2:
+                    if st.button("📚 Régi Excel Statisztika Importálása", use_container_width=True):
+                        with st.spinner("Importálás a Röplabda jelenlét.xlsx-ből..."):
+                            ok, msg = import_historical_stats_to_db(fs_db, gs_client)
+                            st.toast(f"✅ {msg}" if ok else f"❌ {msg}")
+                            st.cache_data.clear()
+                            st.rerun()
 
             st.markdown("---")
             view_selection = st.radio("Mit szeretnél megtekinteni/szerkeszteni?",
@@ -339,6 +349,7 @@ def render_database_page(gs_client, fs_db, logged_in=False):
     with tab_diagramok:
         st.subheader("📊 Jelenléti Statisztikák")
         df_chart_source = get_attendance_rows_fs(fs_db)
+        historical_stats = get_historical_stats_fs(fs_db)
         
         col_cd1, col_cd2 = st.columns(2)
         with col_cd1:
@@ -349,9 +360,9 @@ def render_database_page(gs_client, fs_db, logged_in=False):
             chart_month = st.selectbox("Hónap kiválasztása (csak havi diagramhoz):", list(range(1, 13)), index=datetime.now().month-1, key="chart_ho")
             
         st.markdown("---")
-        render_monthly_attendance_chart(df_chart_source, chart_year, chart_month)
+        render_monthly_attendance_chart(df_chart_source, historical_stats, chart_year, chart_month)
         st.markdown("---")
-        render_yearly_attendance_chart(df_chart_source, chart_year)
+        render_yearly_attendance_chart(df_chart_source, historical_stats, chart_year)
 
     with tab_ranglista:
         st.subheader("Részvételi Ranglista")
