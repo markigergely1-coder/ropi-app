@@ -433,14 +433,20 @@ def get_historical_stats_fs(_db):
 
 def import_historical_stats_to_db(fs_db, gs_client):
     try:
-        if not os.path.exists('Röplabda jelenlét.xlsx'):
-            return False, "Nem található a 'Röplabda jelenlét.xlsx' fájl a gyökérkönyvtárban."
-            
+        import os
         import pandas as pd
         from datetime import datetime
         
-        df = pd.read_excel('Röplabda jelenlét.xlsx')
+        # A projekt gyökérkönyvtárának meghatározása a db.py helyzete alapján
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        excel_path = os.path.join(base_dir, 'Röplabda jelenlét.xlsx')
+        
+        if not os.path.exists(excel_path):
+            return False, f"Nem található a fájl ezen az útvonalon: {excel_path}"
+            
+        df = pd.read_excel(excel_path)
         col_date = df.columns[0]
+        
         if len(df.columns) <= 24:
             return False, "A fájl nem tartalmazza a várt 25 oszlopot (az Y oszlop hiányzik)."
             
