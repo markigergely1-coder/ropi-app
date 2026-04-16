@@ -56,10 +56,10 @@ def render_diagnostics_page(fs_db, gs_client):
             st.markdown("### Külső Email")
             if st.button("📧 Email Környezet Teszt", use_container_width=True):
                 email_cfg = st.secrets.get("email") if hasattr(st, "secrets") else None
-                if email_cfg and "api_key" in email_cfg:
-                    st.success("✅ Email API kulcs beállítva a secrets-ben.")
+                if email_cfg and "sender" in email_cfg and "password" in email_cfg:
+                    st.success(f"✅ Email környezet beállítva (Küldő: {email_cfg['sender']}).")
                 else:
-                    st.warning("🟡 Nincs 'email' vagy 'api_key' beállítva a Streamlit Secrets-ben. Az e-mail küldő funkciók nem fognak működni.")
+                    st.warning("🟡 Nincs 'email' szekció beállítva a Streamlit Secrets-ben ('sender' és 'password').")
                     
     with tab_logs:
         st.subheader("Belső App Események (Logok)")
