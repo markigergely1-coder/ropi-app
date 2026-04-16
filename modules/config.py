@@ -15,6 +15,7 @@ FIRESTORE_LEGACY = "legacy_attendance"
 LEGACY_SHEET_NAME = "Legacy_Totals"
 FIRESTORE_HISTORICAL = "historical_session_totals"
 HISTORICAL_SHEET_NAME = "Old_Sessions_Totals"
+FIRESTORE_APP_LOGS = "app_logs"
 TOLERANCE = 500  # Ft
 
 MAIN_NAME_LIST = [
