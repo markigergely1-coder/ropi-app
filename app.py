@@ -45,7 +45,7 @@ if logged_in:
 st.sidebar.title("🏐 Röpi App Pro")
 st.sidebar.markdown("---")
 
-PUBLIC_PAGES  = ["Admin Regisztráció", "Alkalmak Áttekintése", "Adatbázis", "📲 Check-in QR"]
+PUBLIC_PAGES  = ["Admin Regisztráció", "Alkalmak Áttekintése", "Adatbázis", "📊 Játékos Profil", "📲 Check-in QR"]
 PRIVATE_PAGES = ["Havi Elszámolás", "💳 Befizetések Ellenőrzése", "👤 Tagok & Email", "Beállítások (Kivételek)", "🛠️ Rendszer Diagnosztika"]
 
 if logged_in:
@@ -85,6 +85,9 @@ elif page == "Alkalmak Áttekintése":
 elif page == "Adatbázis":
     from modules.pages.database import render_database_page
     render_database_page(gs_client, fs_db, logged_in=logged_in)
+elif page == "📊 Játékos Profil":
+    from modules.pages.profile import render_player_profile_page
+    render_player_profile_page(fs_db)
 elif page == "Havi Elszámolás" and logged_in:
     from modules.pages.accounting import render_accounting_page
     render_accounting_page(fs_db, gs_client)
