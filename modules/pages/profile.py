@@ -173,8 +173,8 @@ def render_player_profile_page(fs_db):
         color="white"
     ).encode(
         text=alt.condition(
-            alt.datum["Alkalmak száma"] > 0,
-            alt.value("Alkalmak száma:Q"),
+            alt.datum["Alkalmak sz\u00e1ma"] > 0,
+            alt.Text("Alkalmak sz\u00e1ma:Q"),
             alt.value("")
         )
     )
