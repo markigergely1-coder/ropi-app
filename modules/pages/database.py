@@ -9,12 +9,11 @@ from modules.config import (
 from modules.db import (
     get_attendance_rows_gs, get_attendance_rows_fs, get_invoices_fs,
     get_members_fs, sync_members_fs_to_gs, sync_members_gs_to_fs,
-    get_legacy_totals_fs, sync_legacy_fs_to_gs, sync_legacy_gs_to_fs,
-    get_historical_stats_fs, import_historical_stats_to_db,
-    import_legacy_attendance_records
+    get_legacy_totals_fs,
+    get_historical_stats_fs
 )
 from modules.charts import render_monthly_attendance_chart, render_yearly_attendance_chart, render_top5_chart
-from modules.utils import parse_date_str, build_total_attendance, build_total_attendance_fs
+from modules.utils import parse_date_str, build_total_attendance_fs
 
 
 def render_database_page(gs_client, fs_db, logged_in=False):
@@ -195,42 +194,7 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                             st.cache_data.clear()
                             st.rerun()
 
-                st.markdown("---")
-                col_n1, col_n2 = st.columns(2)
-                with col_n1:
-                    if st.button("🏛️ Legacy db szinkronizálása", type="primary", use_container_width=True):
-                        with st.spinner("Folyamatban..."):
-                            if sync_source == "Google Sheets":
-                                ok, msg = sync_legacy_gs_to_fs(gs_client, fs_db)
-                            else:
-                                ok, msg = sync_legacy_fs_to_gs(fs_db, gs_client)
-                            st.toast(f"✅ {msg}" if ok else f"❌ {msg}")
-                            st.cache_data.clear()
-                            st.rerun()
-                with col_n2:
-                    if st.button("📚 Régi Excel Statisztika Importálása", use_container_width=True):
-                        with st.spinner("Importálás a Röplabda jelenlét.xlsx-ből..."):
-                            ok, msg = import_historical_stats_to_db(fs_db, gs_client)
-                            st.toast(f"✅ {msg}" if ok else f"❌ {msg}")
-                            st.cache_data.clear()
-                            st.rerun()
 
-                st.markdown("---")
-                st.markdown("**📜 Legacy Jelenlétk import**")
-                st.info(
-                    "⚠️ Ez az egyszer hasznos: az Excel-ből egyenként importja be a 'Jövök' bejegyzéseket "
-                    "az `attendance_records`-ba (`mode='legacy'` taggel). "
-                    "A duplikálás ellen automatikusan védve van – másodszorra nem fut le."
-                )
-                if st.button("🖥️ Legacy Egyéni Jelenlétek Importálása az Excel-ből",
-                             type="primary", use_container_width=True, key="import_legacy_att_btn"):
-                    with st.spinner("Importálás..."):
-                        ok, msg, count = import_legacy_attendance_records(fs_db, gs_client)
-                        if ok:
-                            st.success(f"✅ {msg}")
-                        else:
-                            st.error(f"❌ {msg}")
-                        st.rerun()
 
             st.markdown("---")
             view_selection = st.radio("Mit szeretnél megtekinteni/szerkeszteni?",
