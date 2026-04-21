@@ -2,15 +2,7 @@ import streamlit as st
 
 from modules.db import get_gsheet_connection, get_firestore_db
 from modules.utils import generate_tuesday_dates
-from modules.pages.admin import render_admin_page, reset_admin_form
-from modules.pages.overview import render_attendance_overview_page
-from modules.pages.database import render_database_page
-from modules.pages.accounting import render_accounting_page
-from modules.pages.members import render_members_page
-from modules.pages.payments import render_payment_check_page
-from modules.pages.settings import render_settings_page
-from modules.pages.qr_page import render_qr_page
-from modules.pages.diagnostics import render_diagnostics_page
+from modules.pages.admin import reset_admin_form  # startup-kor kell (session_state init)
 from modules.logger import log_event
 
 st.set_page_config(page_title="Röpi App Pro", layout="wide", page_icon="🏐")
@@ -85,20 +77,29 @@ with st.sidebar:
     st.markdown("🟢 Email" if email_ok else "🟡 Email (nincs beállítva)")
 
 if page == "Admin Regisztráció":
+    from modules.pages.admin import render_admin_page
     render_admin_page(gs_client, fs_db)
 elif page == "Alkalmak Áttekintése":
+    from modules.pages.overview import render_attendance_overview_page
     render_attendance_overview_page(fs_db)
 elif page == "Adatbázis":
+    from modules.pages.database import render_database_page
     render_database_page(gs_client, fs_db, logged_in=logged_in)
 elif page == "Havi Elszámolás" and logged_in:
+    from modules.pages.accounting import render_accounting_page
     render_accounting_page(fs_db, gs_client)
 elif page == "💳 Befizetések Ellenőrzése" and logged_in:
+    from modules.pages.payments import render_payment_check_page
     render_payment_check_page(fs_db, gs_client)
 elif page == "👤 Tagok & Email" and logged_in:
+    from modules.pages.members import render_members_page
     render_members_page(fs_db, gs_client)
 elif page == "Beállítások (Kivételek)" and logged_in:
+    from modules.pages.settings import render_settings_page
     render_settings_page(fs_db)
 elif page == "🛠️ Rendszer Diagnosztika" and logged_in:
+    from modules.pages.diagnostics import render_diagnostics_page
     render_diagnostics_page(fs_db, gs_client)
 elif page == "📲 Check-in QR":
+    from modules.pages.qr_page import render_qr_page
     render_qr_page()

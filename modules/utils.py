@@ -3,12 +3,6 @@ import os
 import pandas as pd
 import calendar
 from datetime import datetime, timedelta
-from fpdf import FPDF
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
 
 from modules.config import HUNGARY_TZ
 
@@ -96,6 +90,40 @@ def build_total_attendance(rows, year=None):
     return totals
 
 
+def build_total_attendance_fs(df_fs, year=None):
+    """Számítja az összgesített részvételi listát a Firestore DataFrame alapján.
+    Alkalmas az átkonvertált legacy adatok és az új rekordok egységes kezelésére."""
+    if df_fs is None or df_fs.empty:
+        return {}
+    status_by_name_date = {}
+    for _, row in df_fs.iterrows():
+        name = str(row["Név"]).strip() if pd.notna(row["Név"]) else ""
+        is_coming = str(row["Jön-e"]).strip() if pd.notna(row["Jön-e"]) else ""
+        if not name or is_coming not in {"Yes", "No"}:
+            continue
+        mode_val = str(row["Mód"]).strip().lower() if pd.notna(row["Mód"]) else "valós"
+        if mode_val == "teszt":
+            continue
+        reg_val = str(row["Regisztráció Időpontja"]) if pd.notna(row["Regisztráció Időpontja"]) else ""
+        evt_val = str(row["Alkalom Dátuma"]) if pd.notna(row["Alkalom Dátuma"]) else ""
+        rec_date = parse_date_str(evt_val) or parse_date_str(reg_val)
+        if rec_date is None:
+            continue
+        if year is not None and rec_date.year != year:
+            continue
+        key = (name, rec_date)
+        status = status_by_name_date.setdefault(key, {"yes": False, "no": False})
+        if is_coming == "Yes":
+            status["yes"] = True
+        else:
+            status["no"] = True
+    totals = {}
+    for (name, _), status in status_by_name_date.items():
+        if status["yes"] and not status["no"]:
+            totals[name] = totals.get(name, 0) + 1
+    return totals
+
+
 def calculate_monthly_accounting_fs(fs_db, inv_dict):
     from modules.db import get_attendance_rows_fs, get_cancelled_sessions_fs
     target_year = int(inv_dict["target_year"])
@@ -156,6 +184,7 @@ def calculate_monthly_accounting_fs(fs_db, inv_dict):
 
 
 def generate_pdf_bytes(df_osszesito, month_name, year):
+    from fpdf import FPDF  # lazy: csak PDF generáláskor töltődik be
     pdf = FPDF()
     pdf.add_page()
     has_custom_font = False
@@ -204,6 +233,7 @@ def generate_pdf_bytes(df_osszesito, month_name, year):
 
 
 def _get_smtp_connection():
+    import smtplib  # lazy: csak email küldéskor töltődik be
     try:
         sender = st.secrets["email"]["sender"]
         password = st.secrets["email"]["password"]
@@ -215,6 +245,8 @@ def _get_smtp_connection():
 
 
 def send_personal_email(to_address, name, month_name, year, count, amount, guest_details=None):
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
     try:
         server, sender = _get_smtp_connection()
         msg = MIMEMultipart("alternative")
@@ -260,6 +292,9 @@ def send_personal_email(to_address, name, month_name, year, count, amount, guest
 
 
 def send_admin_summary_email(month_name, year, df_osszesito, pdf_bytes):
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.base import MIMEBase
+    from email import encoders
     try:
         admin_email = st.secrets["email"]["admin_email"]
         server, sender = _get_smtp_connection()

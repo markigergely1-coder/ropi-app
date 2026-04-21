@@ -10,10 +10,11 @@ from modules.db import (
     get_attendance_rows_gs, get_attendance_rows_fs, get_invoices_fs,
     get_members_fs, sync_members_fs_to_gs, sync_members_gs_to_fs,
     get_legacy_totals_fs, sync_legacy_fs_to_gs, sync_legacy_gs_to_fs,
-    get_historical_stats_fs, import_historical_stats_to_db
+    get_historical_stats_fs, import_historical_stats_to_db,
+    import_legacy_attendance_records
 )
 from modules.charts import render_monthly_attendance_chart, render_yearly_attendance_chart, render_top5_chart
-from modules.utils import parse_date_str, build_total_attendance
+from modules.utils import parse_date_str, build_total_attendance, build_total_attendance_fs
 
 
 def render_database_page(gs_client, fs_db, logged_in=False):
@@ -214,6 +215,23 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                             st.cache_data.clear()
                             st.rerun()
 
+                st.markdown("---")
+                st.markdown("**📜 Legacy Jelenlétk import**")
+                st.info(
+                    "⚠️ Ez az egyszer hasznos: az Excel-ből egyenként importja be a 'Jövök' bejegyzéseket "
+                    "az `attendance_records`-ba (`mode='legacy'` taggel). "
+                    "A duplikálás ellen automatikusan védve van – másodszorra nem fut le."
+                )
+                if st.button("🖥️ Legacy Egyéni Jelenlétek Importálása az Excel-ből",
+                             type="primary", use_container_width=True, key="import_legacy_att_btn"):
+                    with st.spinner("Importálás..."):
+                        ok, msg, count = import_legacy_attendance_records(fs_db, gs_client)
+                        if ok:
+                            st.success(f"✅ {msg}")
+                        else:
+                            st.error(f"❌ {msg}")
+                        st.rerun()
+
             st.markdown("---")
             view_selection = st.radio("Mit szeretnél megtekinteni/szerkeszteni?",
                                       ["👥 Jelenléti adatok", "🧾 Számlák", "🏛️ Legacy Adatok"], horizontal=True, key="db_view_sel")
@@ -349,6 +367,10 @@ def render_database_page(gs_client, fs_db, logged_in=False):
     with tab_diagramok:
         st.subheader("📊 Jelenléti Statisztikák")
         df_chart_source = get_attendance_rows_fs(fs_db)
+        # A 'legacy' rekordok ki vannak zárva a diagramból: az alkalmankinti létszámot
+        # a historical_session_totals adja (ahol a vendégek száma is benne van).
+        if not df_chart_source.empty and "Mód" in df_chart_source.columns:
+            df_chart_source = df_chart_source[df_chart_source["Mód"] != "legacy"]
         historical_stats = get_historical_stats_fs(fs_db)
         
         col_cd1, col_cd2 = st.columns(2)
@@ -358,7 +380,7 @@ def render_database_page(gs_client, fs_db, logged_in=False):
             chart_year = st.selectbox("Év kiválasztása:", sorted(list(set([cur_year, 2026, 2025, 2024])), reverse=True), key="chart_ev")
         with col_cd2:
             chart_month = st.selectbox("Hónap kiválasztása (csak havi diagramhoz):", list(range(1, 13)), index=datetime.now().month-1, key="chart_ho")
-            
+
         st.markdown("---")
         render_monthly_attendance_chart(df_chart_source, historical_stats, chart_year, chart_month)
         st.markdown("---")
@@ -366,36 +388,23 @@ def render_database_page(gs_client, fs_db, logged_in=False):
 
     with tab_ranglista:
         st.subheader("Részvételi Ranglista")
-        rows = get_attendance_rows_gs(gs_client)
-        legacy_data_fs = get_legacy_totals_fs(fs_db)
-        if rows:
+        st.caption("📌 A ranglista a Firestore adatbázisból számít – tartalmazza a legacy (Excel) és az új rekordokat is.")
+        df_fs_rank = get_attendance_rows_fs(fs_db)
+        if not df_fs_rank.empty:
             v = st.selectbox("Év kiválasztása:", ["All time", "2024", "2025", "2026"], key="ranglista_ev")
-            totals = build_total_attendance(rows, int(v) if v != "All time" else None)
-            
-            legacy = {}
-            for rec in legacy_data_fs:
-                name = rec.get("name", "")
-                if not name: continue
-                if v == "All time":
-                    legacy[name] = rec.get("total_all_time", 0)
-                elif v == "2024":
-                    legacy[name] = rec.get("year_2024", 0)
-                elif v == "2025":
-                    legacy[name] = rec.get("year_2025", 0)
-                elif v == "2026":
-                    legacy[name] = rec.get("year_2026", 0)
-
-            for n, c in totals.items():
-                legacy[n] = legacy.get(n, 0) + c
-            data = [{"Helyezés": i, "Név": n, "Összes Részvétel": c}
-                    for i, (n, c) in enumerate(sorted(legacy.items(), key=lambda x: (-x[1], x[0])), 1) if c > 0]
-            
+            year_filter = int(v) if v != "All time" else None
+            totals = build_total_attendance_fs(df_fs_rank, year=year_filter)
+            data = [
+                {"Helyezés": i, "Név": n, "Összes Részvétel": c}
+                for i, (n, c) in enumerate(
+                    sorted(totals.items(), key=lambda x: (-x[1], x[0])), 1
+                ) if c > 0
+            ]
             tab_rl_lista, tab_rl_top5 = st.tabs(["📋 Adattábla", "🏅 Top 5 Hősök"])
-            
             with tab_rl_lista:
                 st.dataframe(data, use_container_width=True)
-            
             with tab_rl_top5:
                 render_top5_chart(data)
         else:
-            st.warning("Nem sikerült betölteni a Google Sheets adatokat.")
+            st.warning("Nem sikerült betölteni az adatokat a Firestore-ból.")
+

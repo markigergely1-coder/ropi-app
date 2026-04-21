@@ -174,11 +174,12 @@ def get_members_fs(_db):
         return pd.DataFrame(columns=["ID", "Név", "Email", "Aktív"])
 
 
-def get_members_gs(gs_client):
-    if gs_client is None:
+@st.cache_data(ttl=300)
+def get_members_gs(_gs_client):
+    if _gs_client is None:
         return pd.DataFrame(columns=["Név", "Email", "Aktív"])
     try:
-        ss = gs_client.open(GSHEET_NAME)
+        ss = _gs_client.open(GSHEET_NAME)
         sheet_titles = [w.title for w in ss.worksheets()]
         if MEMBERS_SHEET_NAME not in sheet_titles:
             ws = ss.add_worksheet(title=MEMBERS_SHEET_NAME, rows=100, cols=5)
@@ -511,3 +512,121 @@ def import_historical_stats_to_db(fs_db, gs_client):
         return True, f"Sikeresen beolvasva és szinkronizálva {len(historical_data)} régi nap!"
     except Exception as e:
         return False, f"Hiba az Excel importkor: {e}"
+
+
+def import_legacy_attendance_records(fs_db, gs_client):
+    """Importálja az egyéni Legacy jelenléti rekordokat az Excel-ből az attendance_records-ba.
+    Csak 'Jövök :)' értékeket importál, mode='legacy' taggel.
+    Duplikálás ellen: ha már van legacy rekord, leáll."""
+    import os
+    import pandas as pd
+
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    excel_path = os.path.join(base_dir, 'Röplabda jelenlét.xlsx')
+
+    if not os.path.exists(excel_path):
+        return False, f"Nem találom a fájlt: {excel_path}", 0
+
+    # Duplikálás ellenőrzése
+    if fs_db:
+        try:
+            existing = list(fs_db.collection(FIRESTORE_COLLECTION)
+                            .where("mode", "==", "legacy").limit(1).stream())
+            if existing:
+                return False, "Már vannak 'legacy' rekordok az adatbázisban – duplikálás elkerülése végett az import le lett állítva.", 0
+        except Exception as e:
+            return False, f"Ellenőrzési hiba: {e}", 0
+
+    df = pd.read_excel(excel_path, header=None)
+
+    # 0. sor: fejléc — 0. oszlop = 'Név:', 1-21 = játékosok, 22 = 'Plusz emberek száma'
+    player_cols = []
+    for c in range(1, len(df.columns)):
+        cell = df.iloc[0, c]
+        if pd.isna(cell):
+            continue
+        name = str(cell).strip()
+        if name in ("", "Plusz emberek száma"):
+            continue
+        player_cols.append((c, name))
+
+    records = []
+    for r in range(1, len(df)):
+        date_val = df.iloc[r, 0]
+        if pd.isna(date_val):
+            continue
+        try:
+            if hasattr(date_val, 'strftime'):
+                date_str = date_val.strftime("%Y-%m-%d")
+            else:
+                from datetime import datetime as _dt
+                date_str = _dt.strptime(str(date_val)[:10], "%Y-%m-%d").strftime("%Y-%m-%d")
+        except Exception:
+            continue
+
+        for col_idx, name in player_cols:
+            cell_val = df.iloc[r, col_idx]
+            if pd.isna(cell_val):
+                continue
+            val_str = str(cell_val).strip()
+
+            # Szöveges formátum: "Jövök :)" / "Nem jövök :("
+            if "Jövök" in val_str or ":)" in val_str:
+                is_coming = True
+            elif "Nem" in val_str or ":(" in val_str:
+                is_coming = False
+            else:
+                # Numerikus formátum: 0 = nem jön, >=1 = jön
+                try:
+                    num = float(val_str)
+                    is_coming = num >= 1
+                except ValueError:
+                    continue  # ismeretlen érték, skip
+
+            if is_coming:
+                records.append({
+                    "name": name,
+                    "status": "Yes",
+                    "timestamp": date_str + " 12:00:00",
+                    "event_date": date_str,
+                    "mode": "legacy"
+                })
+
+    if not records:
+        return False, "Nem sikerült 'Jövök' értékeket kiolvasni az Excelből.", 0
+
+    # Firestore batch write (max 500/batch)
+    if fs_db:
+        try:
+            batch = fs_db.batch()
+            count_batch = 0
+            for rec in records:
+                doc_ref = fs_db.collection(FIRESTORE_COLLECTION).document()
+                batch.set(doc_ref, rec)
+                count_batch += 1
+                if count_batch >= 500:
+                    batch.commit()
+                    batch = fs_db.batch()
+                    count_batch = 0
+            if count_batch > 0:
+                batch.commit()
+        except Exception as e:
+            return False, f"Firestore írási hiba: {e}", 0
+
+    # GSheet write (max 500 sor/hívás)
+    if gs_client:
+        try:
+            sheet = gs_client.open(GSHEET_NAME).sheet1
+            rows_to_add = [
+                [rec["name"], rec["status"], rec["timestamp"], rec["event_date"], "", rec["mode"]]
+                for rec in records
+            ]
+            for i in range(0, len(rows_to_add), 500):
+                sheet.append_rows(rows_to_add[i:i + 500], value_input_option='USER_ENTERED')
+        except Exception as e:
+            st.cache_data.clear()
+            return True, f"Firestore OK, de GSheet hiba: {e}", len(records)
+
+    st.cache_data.clear()
+    unique_dates = len(set(r['event_date'] for r in records))
+    return True, f"Sikeresen importálva {len(records)} egyéni jelenlét rekord ({unique_dates} különböző dátumból).", len(records)
