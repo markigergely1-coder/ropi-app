@@ -45,8 +45,8 @@ if logged_in:
 st.sidebar.title("🏐 Röpi App Pro")
 st.sidebar.markdown("---")
 
-PUBLIC_PAGES  = ["Admin Regisztráció", "Alkalmak Áttekintése", "Adatbázis", "📊 Játékos Profil", "📲 Check-in QR"]
-PRIVATE_PAGES = ["Havi Elszámolás", "💳 Befizetések Ellenőrzése", "👤 Tagok & Email", "Beállítások (Kivételek)", "🛠️ Rendszer Diagnosztika"]
+PUBLIC_PAGES  = ["Admin Regisztráció", "Alkalmak Áttekintése", "Adatbázis", "📲 Check-in QR"]
+PRIVATE_PAGES = ["📊 Játékos Profil", "Havi Elszámolás", "💳 Befizetések Ellenőrzése", "👤 Tagok & Email", "Beállítások (Kivételek)", "🛠️ Rendszer Diagnosztika"]
 
 if logged_in:
     page = st.sidebar.radio("Menü", PUBLIC_PAGES + PRIVATE_PAGES)
