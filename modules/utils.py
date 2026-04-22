@@ -183,6 +183,64 @@ def calculate_monthly_accounting_fs(fs_db, inv_dict):
     return True, "Siker", pd.DataFrame(elszamolas_data), pd.DataFrame(osszesito_data), target_month_name, target_year
 
 
+def bulk_calculate_settlements(fs_db, force_recalculate: bool = False) -> dict:
+    """
+    Az összes Firestore számlára elvégzi az elszámolás kalkulációt és menti az eredményt.
+
+    Args:
+        fs_db: Firestore adatbázis kapcsolat
+        force_recalculate: Ha True, a már meglévő elszámolásokat is újraszámolja.
+                           Ha False, csak a hiányzókat számolja ki.
+
+    Returns:
+        {
+          "ok": [...],         # Sikeresen kiszámított hónapok listája
+          "skipped": [...],    # Kihagyott hónapok (már léteztek)
+          "failed": [...],     # Hibás hónapok
+          "total": int
+        }
+    """
+    from modules.db import get_invoices_fs, get_settlement_fs, save_settlement_fs
+    from modules.utils import generate_pdf_bytes
+
+    invoices = get_invoices_fs(fs_db)
+    if not invoices:
+        return {"ok": [], "skipped": [], "failed": [{"reason": "Nincsenek számlák a Firestore-ban."}], "total": 0}
+
+    results = {"ok": [], "skipped": [], "failed": [], "total": len(invoices)}
+
+    for inv in invoices:
+        year = int(inv.get("target_year", 0))
+        month_num = int(inv.get("target_month", 0))
+        month_name = inv.get("month_name", f"{month_num}. hónap")
+        label = f"{year}. {month_name}"
+
+        if not force_recalculate:
+            existing = get_settlement_fs(fs_db, year, month_num)
+            if existing is not None:
+                results["skipped"].append({"label": label, "year": year, "month_num": month_num})
+                continue
+
+        success, msg, df_elszamolas, df_osszesito, mn, yr = calculate_monthly_accounting_fs(fs_db, inv)
+        if not success:
+            results["failed"].append({"label": label, "year": year, "month_num": month_num, "reason": msg})
+            continue
+
+        ok, result = save_settlement_fs(fs_db, yr, month_num, mn, df_elszamolas, df_osszesito)
+        if ok:
+            results["ok"].append({
+                "label": label, "year": year, "month_num": month_num,
+                "people": len(df_osszesito),
+                "total_ft": float(df_osszesito["Fizetendő (Ft)"].sum()) if not df_osszesito.empty else 0.0
+            })
+        else:
+            results["failed"].append({"label": label, "year": year, "month_num": month_num, "reason": result})
+
+    return results
+
+
+
+
 def generate_pdf_bytes(df_osszesito, month_name, year):
     from fpdf import FPDF  # lazy: csak PDF generáláskor töltődik be
     pdf = FPDF()

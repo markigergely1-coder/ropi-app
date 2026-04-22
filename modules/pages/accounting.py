@@ -3,7 +3,71 @@ import pandas as pd
 import time
 
 from modules.db import get_invoices_fs, get_members_fs, save_settlement_fs, get_settlement_fs
-from modules.utils import calculate_monthly_accounting_fs, generate_pdf_bytes, send_personal_email, send_admin_summary_email
+from modules.utils import calculate_monthly_accounting_fs, generate_pdf_bytes, send_personal_email, send_admin_summary_email, bulk_calculate_settlements
+
+
+def _render_bulk_section(fs_db):
+    """Tömeges elszámolás-generáló szekció — önálló helper, bárhonnan hívható."""
+    st.markdown("---")
+    st.subheader("🔄 Összes elszámolás generálása")
+    st.markdown(
+        "Ezzel a funkcióval az összes Firestore-ban tárolt számlára automatikusan elvégzi "
+        "az elszámolás kalkulációt és elmenti az eredményt. "
+        "A profiloldalon ezután megjelenik a **pontos éves összeg** minden játékosnál."
+    )
+
+    force_recalc = st.checkbox(
+        "🔁 Már meglévő elszámolások felülírása (újraszámolás)",
+        value=False,
+        key="bulk_force_recalc",
+        help="Ha be van jelölve, minden hónapot újraszámol — akkor is, ha már volt elszámolás."
+    )
+
+    if st.button("🚀 Összes elszámolás generálása és mentése", type="primary", key="bulk_calc_btn"):
+        invoices_check = get_invoices_fs(fs_db)
+        if not invoices_check:
+            st.error("❌ Nincsenek számlák a Firestore-ban!")
+        else:
+            progress = st.progress(0, text="Elszámolások generálása...")
+            with st.spinner(f"Feldolgozás... (összesen {len(invoices_check)} számla)"):
+                bulk_results = bulk_calculate_settlements(fs_db, force_recalculate=force_recalc)
+                st.cache_data.clear()
+            progress.empty()
+
+            ok_count = len(bulk_results["ok"])
+            skip_count = len(bulk_results["skipped"])
+            fail_count = len(bulk_results["failed"])
+            total = bulk_results["total"]
+
+            if ok_count > 0:
+                st.success(f"✅ Sikeresen generálva és mentve: **{ok_count}/{total}** hónap")
+            if skip_count > 0:
+                st.info(f"⏭️ Kihagyva (már létezett): **{skip_count}** hónap")
+            if fail_count > 0:
+                st.warning(f"⚠️ Sikertelen: **{fail_count}** hónap")
+
+            if bulk_results["ok"]:
+                st.markdown("**✅ Sikeresen generált elszámolások:**")
+                df_ok = pd.DataFrame(bulk_results["ok"])[["label", "people", "total_ft"]]
+                df_ok.columns = ["Hónap", "Résztvevők", "Összköltség (Ft)"]
+                df_ok["Összköltség (Ft)"] = df_ok["Összköltség (Ft)"].apply(
+                    lambda x: f"{x:,.0f} Ft".replace(",", " ")
+                )
+                st.dataframe(df_ok, use_container_width=True, hide_index=True)
+
+            if bulk_results["skipped"]:
+                with st.expander(f"⏭️ Kihagyott hónapok ({skip_count} db)"):
+                    df_skip = pd.DataFrame(bulk_results["skipped"])[["label"]]
+                    df_skip.columns = ["Hónap"]
+                    st.dataframe(df_skip, use_container_width=True, hide_index=True)
+
+            if bulk_results["failed"]:
+                with st.expander(f"❌ Hibás hónapok ({fail_count} db)"):
+                    df_fail = pd.DataFrame(bulk_results["failed"])[["label", "reason"]]
+                    df_fail.columns = ["Hónap", "Hiba oka"]
+                    st.dataframe(df_fail, use_container_width=True, hide_index=True)
+
+
 
 
 def render_accounting_page(fs_db, gs_client):
@@ -47,7 +111,10 @@ def render_accounting_page(fs_db, gs_client):
             st.session_state["acc_pdf_bytes"] = generate_pdf_bytes(df_osszesito, month_name, selected_inv["target_year"])
             st.session_state["acc_from_cache"] = True
         else:
+            # Nincs betöltött elszámolás — de a tömeges generálót még megmutatjuk
+            _render_bulk_section(fs_db)
             return
+
 
     df_osszesito = st.session_state["acc_df_osszesito"]
     df_elszamolas = st.session_state["acc_df_elszamolas"]
@@ -175,3 +242,6 @@ def render_accounting_page(fs_db, gs_client):
         df_display = df_osszesito.copy()
         df_display['Fizetendő (Ft)'] = df_display['Fizetendő (Ft)'].apply(lambda x: f"{x:.0f} Ft")
         st.dataframe(df_display, use_container_width=True)
+
+    _render_bulk_section(fs_db)
+
