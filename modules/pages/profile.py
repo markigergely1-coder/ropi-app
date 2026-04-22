@@ -3,8 +3,8 @@ import pandas as pd
 import altair as alt
 from datetime import datetime
 
-from modules.db import get_attendance_rows_fs
-from modules.utils import parse_date_str
+from modules.db import get_attendance_rows_fs, get_all_settlements_for_player, get_avg_session_attendees_for_year
+from modules.utils import parse_date_str, estimate_cost_for_player
 from modules.config import HUNGARY_TZ
 
 
@@ -104,7 +104,123 @@ def render_player_profile_page(fs_db):
 
     st.markdown("---")
 
+    # --- Pénzügyi összesítő ---
+    st.markdown(f"#### 💰 Pénzügyi összesítő — {selected_year}")
+
+    # Átlagos létszám lekérése az elszámolásokból (pontosabb becsléshez)
+    avg_attendees = get_avg_session_attendees_for_year(fs_db, selected_year)
+
+    # Becsült összeg kiszámítása
+    cost_est = estimate_cost_for_player(year_count, selected_year, avg_attendees)
+
+    # Elszámolások lekérése erre a játékosra
+    all_settlements = get_all_settlements_for_player(fs_db, selected_name)
+    year_settlements = [s for s in all_settlements if s["year"] == selected_year]
+
+    # Összeg az elszámolásokból (ahol megvan)
+    exact_total = sum(s["amount"] for s in year_settlements)
+    exact_count_from_settlements = sum(s["count"] for s in year_settlements)
+    has_exact = len(year_settlements) > 0
+
+    # Megjelenítés
+    fin_col1, fin_col2 = st.columns([1, 1])
+
+    with fin_col1:
+        st.markdown("**📊 Becsült fizetendő összeg**")
+
+        # Pontosabb becslés
+        precise_label = f"~{cost_est['precise']:,.0f} Ft".replace(",", " ")
+        if avg_attendees:
+            attendees_note = f"{avg_attendees:.0f} fő"
+        else:
+            attendees_note = "12 fő (becsült)"
+
+        st.markdown(
+            f"""
+            <div style="background:#1e3a5f; border-radius:10px; padding:16px 20px; margin-bottom:10px;">
+              <div style="color:#a8c8f8; font-size:0.82em; margin-bottom:4px;">
+                📐 Pontosabb becslés
+                <span style="opacity:0.7; font-size:0.85em;">
+                  ({cost_est['hourly_rate']:,} Ft/óra · {cost_est['duration']} óra · {attendees_note})
+                </span>
+              </div>
+              <div style="font-size:1.6em; font-weight:700; color:#60a5fa; letter-spacing:0.5px;">
+                {precise_label}
+              </div>
+              <div style="color:#6b7280; font-size:0.78em; margin-top:6px;">
+                ≈ {cost_est['cost_per_session']:,.0f} Ft / alkalom · {year_count} alkalom
+              </div>
+            </div>
+            """.replace(",", " "),
+            unsafe_allow_html=True
+        )
+
+        # Egyszerű becslés (másodlagos)
+        simple_label = f"~{cost_est['simple']:,.0f} Ft".replace(",", " ")
+        st.markdown(
+            f"""
+            <div style="background:#1a2a1a; border-radius:8px; padding:10px 16px; margin-bottom:4px;">
+              <div style="color:#86efac; font-size:0.78em; margin-bottom:2px;">
+                💡 Egyszerű becslés (2 300 Ft/alkalom)
+              </div>
+              <div style="font-size:1.1em; font-weight:600; color:#4ade80;">
+                {simple_label}
+              </div>
+            </div>
+            """.replace(",", " "),
+            unsafe_allow_html=True
+        )
+
+    with fin_col2:
+        if has_exact:
+            total_label = f"{exact_total:,.0f} Ft".replace(",", " ")
+            st.markdown("**✅ Pontos összeg (elszámolásokból)**")
+            st.markdown(
+                f"""
+                <div style="background:#1a3a2a; border-radius:10px; padding:16px 20px; margin-bottom:10px;">
+                  <div style="color:#86efac; font-size:0.82em; margin-bottom:4px;">
+                    💳 Elszámolásokból összesítve ({len(year_settlements)} hónap)
+                  </div>
+                  <div style="font-size:1.6em; font-weight:700; color:#4ade80; letter-spacing:0.5px;">
+                    {total_label}
+                  </div>
+                  <div style="color:#6b7280; font-size:0.78em; margin-top:6px;">
+                    {exact_count_from_settlements} alkalom alapján
+                  </div>
+                </div>
+                """.replace(",", " "),
+                unsafe_allow_html=True
+            )
+
+            # Havi bontás táblázat
+            df_exact = pd.DataFrame(year_settlements)
+            df_exact = df_exact.rename(columns={
+                "month_name": "Hónap",
+                "count": "Alkalmak",
+                "amount": "Fizetendő (Ft)",
+            })[["Hónap", "Alkalmak", "Fizetendő (Ft)"]]
+            df_exact["Fizetendő (Ft)"] = df_exact["Fizetendő (Ft)"].apply(
+                lambda x: f"{x:,.0f} Ft".replace(",", " ")
+            )
+            st.dataframe(df_exact, use_container_width=True, hide_index=True)
+        else:
+            st.markdown("**⏳ Elszámolás még nem elérhető**")
+            st.markdown(
+                f"""
+                <div style="background:#2a2a1a; border-radius:10px; padding:16px 20px; color:#fbbf24; font-size:0.9em;">
+                  📭 <strong>{selected_year}-re</strong> még nem készült el vagy nem lett elmentve elszámolás.<br>
+                  <span style="opacity:0.7; font-size:0.85em;">
+                    Végezd el az elszámolást az 'Elszámolás' menüpontban — automatikusan mentésre kerül.
+                  </span>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+    st.markdown("---")
+
     # --- Éves összesítő diagram ---
+
     st.markdown("#### 📈 Éves összesítő")
     yearly = (
         df_player.groupby("year")

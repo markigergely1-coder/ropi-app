@@ -270,6 +270,85 @@ def get_settlement_fs(fs_db, year, month_num):
         return None
 
 
+@st.cache_data(ttl=300)
+def get_all_settlements_for_player(_fs_db, name: str) -> list:
+    """
+    Összegyűjti az összes elmentett elszámolásból az adott játékos adatait.
+
+    Visszatér: [{"year": int, "month_num": int, "month_name": str,
+                  "count": int, "amount": float}, ...] — időrend szerint növekvő.
+    """
+    if _fs_db is None:
+        return []
+    try:
+        docs = _fs_db.collection(FIRESTORE_SETTLEMENTS).stream()
+        results = []
+        for doc in docs:
+            d = doc.to_dict()
+            if "df_osszesito" not in d:
+                continue
+            try:
+                df_osszesito = pd.read_json(d["df_osszesito"], orient="records")
+            except Exception:
+                continue
+            if df_osszesito.empty or "Név" not in df_osszesito.columns:
+                continue
+            player_row = df_osszesito[df_osszesito["Név"] == name]
+            if player_row.empty:
+                continue
+            row = player_row.iloc[0]
+            results.append({
+                "year": int(d.get("year", 0)),
+                "month_num": int(d.get("month_num", 0)),
+                "month_name": str(d.get("month_name", "")),
+                "count": int(row.get("Részvétel száma", 0)),
+                "amount": float(row.get("Fizetendő (Ft)", 0.0)),
+            })
+        results.sort(key=lambda x: (x["year"], x["month_num"]))
+        return results
+    except Exception as e:
+        return []
+
+
+@st.cache_data(ttl=300)
+def get_avg_session_attendees_for_year(_fs_db, year: int) -> float | None:
+    """
+    Kiszámolja az átlagos résztvevőszámot a megadott évre az elmentett elszámolások alapján.
+    Ezzel pontosítható a becsült összeg. Ha nincs adat, None-t ad vissza.
+    """
+    if _fs_db is None:
+        return None
+    try:
+        docs = _fs_db.collection(FIRESTORE_SETTLEMENTS).stream()
+        total_attendees = 0
+        total_sessions = 0
+        for doc in docs:
+            d = doc.to_dict()
+            if int(d.get("year", 0)) != year:
+                continue
+            if "df_elszamolas" not in d:
+                continue
+            try:
+                df_elszamolas = pd.read_json(d["df_elszamolas"], orient="records")
+            except Exception:
+                continue
+            if "Létszám" in df_elszamolas.columns:
+                for val in df_elszamolas["Létszám"]:
+                    try:
+                        num = int(str(val).replace(" fő", "").strip())
+                        total_attendees += num
+                        total_sessions += 1
+                    except Exception:
+                        pass
+        if total_sessions == 0:
+            return None
+        return round(total_attendees / total_sessions, 1)
+    except Exception:
+        return None
+
+
+
+
 def sync_qr_checkins_to_sheet(fs_db, gs_client):
     """QR check-in rekordokat (synced_to_sheet=False) szinkronizálja a Google Sheetsbe."""
     if not fs_db or not gs_client:

@@ -377,3 +377,39 @@ def parse_revolut_csv(uploaded_file):
 
     except Exception as e:
         return None, f"Hiba a fájl feldolgozásakor: {e}"
+
+
+def estimate_cost_for_player(session_count: int, year: int, avg_attendees: float | None = None) -> dict:
+    """
+    Becslés a játékos fizetendő összegéről egy adott évre.
+
+    Kétféle módszert ad vissza:
+    - 'precise': (óradíj × időtartam) / résztvevőszám × alkalmak
+    - 'simple': alkalmak × 2300 Ft
+
+    Args:
+        session_count: Az adott évben volt alkalmak száma
+        year: Az év (díjszabás meghatározásához)
+        avg_attendees: Átlagos résztvevőszám (ha None, fix 12 fővel számol)
+
+    Returns:
+        {'precise': float, 'simple': float, 'hourly_rate': int,
+         'duration': float, 'avg_attendees': float}
+    """
+    # Óradíj az év alapján
+    hourly_rate = 14_000 if year <= 2024 else 16_000
+    duration_hours = 1.5  # átlagos játékidő (óra)
+    attendees = avg_attendees if avg_attendees and avg_attendees > 0 else 12.0
+
+    cost_per_session_precise = (hourly_rate * duration_hours) / attendees
+    precise = session_count * cost_per_session_precise
+    simple = session_count * 2_300.0
+
+    return {
+        "precise": precise,
+        "simple": simple,
+        "hourly_rate": hourly_rate,
+        "duration": duration_hours,
+        "avg_attendees": attendees,
+        "cost_per_session": cost_per_session_precise,
+    }
