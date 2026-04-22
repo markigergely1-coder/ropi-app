@@ -115,7 +115,8 @@ def render_player_profile_page(fs_db):
 
     # Elszámolások lekérése erre a játékosra
     all_settlements = get_all_settlements_for_player(fs_db, selected_name)
-    year_settlements = [s for s in all_settlements if s["year"] == selected_year]
+    # int() casting mindkét oldalon: Firestore néha más numerikus típust ad vissza
+    year_settlements = [s for s in all_settlements if int(s["year"]) == int(selected_year)]
 
     # Összeg az elszámolásokból (ahol megvan)
     exact_total = sum(s["amount"] for s in year_settlements)
@@ -205,17 +206,53 @@ def render_player_profile_page(fs_db):
             st.dataframe(df_exact, use_container_width=True, hide_index=True)
         else:
             st.markdown("**⏳ Elszámolás még nem elérhető**")
-            st.markdown(
-                f"""
-                <div style="background:#2a2a1a; border-radius:10px; padding:16px 20px; color:#fbbf24; font-size:0.9em;">
-                  📭 <strong>{selected_year}-re</strong> még nem készült el vagy nem lett elmentve elszámolás.<br>
-                  <span style="opacity:0.7; font-size:0.85em;">
-                    Végezd el az elszámolást az 'Elszámolás' menüpontban — automatikusan mentésre kerül.
-                  </span>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+
+            # Diagnosztika: minden megtalált elszámolás megjelenítése
+            if all_settlements:
+                found_years = sorted(set(int(s["year"]) for s in all_settlements), reverse=True)
+                years_str = ", ".join(str(y) for y in found_years)
+                st.markdown(
+                    f"""
+                    <div style="background:#2a2a1a; border-radius:10px; padding:16px 20px; color:#fbbf24; font-size:0.9em;">
+                      ⚠️ <strong>{selected_year}-re</strong> nincs elszámolás ehhez a játékoshoz.<br>
+                      <span style="opacity:0.85; font-size:0.88em;">
+                        Elérhető elszámolási évek: <strong>{years_str}</strong>
+                      </span><br>
+                      <span style="opacity:0.6; font-size:0.8em;">
+                        Ha a {selected_year}-es hónapokhoz nincsenek számlák a Firestore-ban,
+                        az Elszámolás oldalon az "Összes elszámolás generálása" gomb nem tud {selected_year}-es adatot menteni.
+                      </span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+                # Összesítő táblázat minden megtalált elszámolásról
+                with st.expander(f"📋 {selected_name} összes elszámolása ({len(all_settlements)} hónap)"):
+                    df_all_s = pd.DataFrame(all_settlements)
+                    df_all_s = df_all_s.rename(columns={
+                        "year": "Év", "month_name": "Hónap",
+                        "count": "Alkalmak", "amount": "Fizetendő (Ft)"
+                    })[["Év", "Hónap", "Alkalmak", "Fizetendő (Ft)"]]
+                    df_all_s["Fizetendő (Ft)"] = df_all_s["Fizetendő (Ft)"].apply(
+                        lambda x: f"{x:,.0f} Ft".replace(",", " ")
+                    )
+                    st.dataframe(df_all_s, use_container_width=True, hide_index=True)
+            else:
+                st.markdown(
+                    f"""
+                    <div style="background:#2a2a1a; border-radius:10px; padding:16px 20px; color:#fbbf24; font-size:0.9em;">
+                      📭 <strong>{selected_name}</strong> névhez egyetlen elszámolás sem található
+                      (sem {selected_year}-re, sem más évre).<br>
+                      <span style="opacity:0.7; font-size:0.82em;">
+                        1. Menj az <strong>Elszámolás</strong> oldalra<br>
+                        2. Görgess le az "🔄 Összes elszámolás generálása" szekcióhoz<br>
+                        3. Kattints a 🚀 gombra — az összes számlából legenerálja és menti
+                      </span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
 
     st.markdown("---")
 

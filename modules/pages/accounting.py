@@ -97,6 +97,7 @@ def render_accounting_page(fs_db, gs_client):
         ok, result = save_settlement_fs(fs_db, year, selected_inv["target_month"], month_name, df_elszamolas, df_osszesito)
         if not ok:
             st.warning(f"⚠️ Firestore mentés sikertelen: {result}")
+        st.cache_data.clear()  # profil oldal is friss adatot kap
         st.rerun()
 
     if "acc_df_osszesito" not in st.session_state:
