@@ -58,14 +58,20 @@ def get_firestore_db():
 def save_all_data(gs_client, fs_client, rows):
     success_gs = False
     success_fs = False
+    error_msg_gs = ""
     error_msg_fs = ""
+
+    # Google Sheets mentés — hiba esetén folytatódik a Firestore mentés
     if gs_client:
         try:
             sheet = gs_client.open(GSHEET_NAME).sheet1
             sheet.append_rows(rows, value_input_option='USER_ENTERED')
             success_gs = True
         except Exception as e:
-            return False, f"Hiba a Google Sheet mentésekor: {e}"
+            error_msg_gs = str(e)
+            print(f"GSheet mentési hiba: {e}")
+
+    # Firestore mentés — a GS eredményétől független
     if fs_client:
         try:
             for r in rows:
@@ -77,15 +83,20 @@ def save_all_data(gs_client, fs_client, rows):
             success_fs = True
         except Exception as e:
             error_msg_fs = str(e)
+            print(f"Firestore mentési hiba: {e}")
     else:
         error_msg_fs = "Nincs aktív Firestore kapcsolat."
+
     st.cache_data.clear()
+
     if success_gs and success_fs:
         return True, "Sikeres mentés a Google Sheet-be és a Firestore-ba is! ✅☁️"
+    elif success_fs and not success_gs:
+        return True, f"Mentve a Firestore-ba, de Google Sheet hiba: {error_msg_gs} ⚠️"
     elif success_gs and not success_fs:
         return True, f"Mentve a Sheet-be, de Firestore hiba: {error_msg_fs} ⚠️"
     else:
-        return False, "Kritikus hiba, egyik adatbázis sem érhető el."
+        return False, f"Kritikus hiba, egyik adatbázis sem érhető el. (GS: {error_msg_gs} | FS: {error_msg_fs})"
 
 
 @st.cache_data(ttl=300)
@@ -307,11 +318,12 @@ def get_all_settlements_for_player(_fs_db, name: str) -> list:
         results.sort(key=lambda x: (x["year"], x["month_num"]))
         return results
     except Exception as e:
+        print(f"get_all_settlements_for_player hiba: {e}")
         return []
 
 
 @st.cache_data(ttl=300)
-def get_avg_session_attendees_for_year(_fs_db, year: int) -> float | None:
+def get_avg_session_attendees_for_year(_fs_db, year: int):
     """
     Kiszámolja az átlagos résztvevőszámot a megadott évre az elmentett elszámolások alapján.
     Ezzel pontosítható a becsült összeg. Ha nincs adat, None-t ad vissza.
@@ -476,18 +488,28 @@ def sync_legacy_gs_to_fs(gs_client, fs_db):
                 "year_2025": int(r[3]) if len(r) > 3 and r[3] else 0,
                 "year_2026": int(r[4]) if len(r) > 4 and r[4] else 0
             })
-            
-        batch = fs_db.batch()
-        for doc in fs_db.collection(FIRESTORE_LEGACY).stream():
-            batch.delete(doc.reference)
-        batch.commit()
-        
+
+        if not docs_to_insert:
+            return False, "Üres lista, nincs mit szinkronizálni."
+
+        # Biztonságos sorrend: ELŐBB ír, UTÁNA töröl — adatvesztés elkerülése
         batch = fs_db.batch()
         for rec in docs_to_insert:
             doc_id = rec["name"].replace(" ", "_")
             doc_ref = fs_db.collection(FIRESTORE_LEGACY).document(doc_id)
             batch.set(doc_ref, rec)
         batch.commit()
+
+        # Töröljük azokat, amelyek nem szerepelnek az új listában
+        new_ids = {rec["name"].replace(" ", "_") for rec in docs_to_insert}
+        old_docs = list(fs_db.collection(FIRESTORE_LEGACY).stream())
+        stale = [d for d in old_docs if d.id not in new_ids]
+        if stale:
+            del_batch = fs_db.batch()
+            for d in stale:
+                del_batch.delete(d.reference)
+            del_batch.commit()
+
         return True, f"{len(docs_to_insert)} legacy rekord szinkronizálva a Firestore-ba."
     except Exception as e:
         return False, str(e)
@@ -513,8 +535,6 @@ def get_historical_stats_fs(_db):
 
 def import_historical_stats_to_db(fs_db, gs_client):
     try:
-        import os
-        import pandas as pd
         from datetime import datetime
         
         # A projekt gyökérkönyvtárának meghatározása a db.py helyzete alapján
@@ -597,9 +617,6 @@ def import_legacy_attendance_records(fs_db, gs_client):
     """Importálja az egyéni Legacy jelenléti rekordokat az Excel-ből az attendance_records-ba.
     Csak 'Jövök :)' értékeket importál, mode='legacy' taggel.
     Duplikálás ellen: ha már van legacy rekord, leáll."""
-    import os
-    import pandas as pd
-
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     excel_path = os.path.join(base_dir, 'Röplabda jelenlét.xlsx')
 

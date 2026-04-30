@@ -28,14 +28,7 @@ ADMIN_EMAILS = [e.strip().lower() for e in _raw]
 logged_in = bool(st.user.is_logged_in and st.user.email.lower() in ADMIN_EMAILS)
 st.session_state.logged_in = logged_in
 
-# Alapvető oldal meglátogatás naplózása (mindenki - vendég és admin is)
-if "visit_logged" not in st.session_state:
-    szerep = "Admin" if logged_in else "Vendég"
-    melyik_oldal = "QR Checkin oldal" if st.query_params.get("checkin") == "1" else "Főoldal"
-    log_event(fs_db, "INFO", f"Új látogató ({szerep})", {"oldal": melyik_oldal})
-    st.session_state.visit_logged = True
-
-# Külön logoljuk a sikeres admin bejelentkezést (ha később lép be)
+# Csak admin belépést naplózunk (vendég látogatók nem kerülnek a logba)
 if logged_in:
     if "admin_login_logged" not in st.session_state:
         log_event(fs_db, "INFO", "Sikeres Admin bejelentkezés", {"email": st.user.email})
