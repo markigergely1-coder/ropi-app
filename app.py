@@ -25,7 +25,8 @@ if 'admin_date' not in st.session_state:
 _raw = st.secrets.get("app", {}).get("admin_emails", [])
 ADMIN_EMAILS = [e.strip().lower() for e in _raw]
 
-logged_in = bool(st.user.is_logged_in and st.user.email.lower() in ADMIN_EMAILS)
+_email = getattr(st.user, "email", None) or ""
+logged_in = bool(st.user.is_logged_in and _email.lower() in ADMIN_EMAILS)
 st.session_state.logged_in = logged_in
 
 # Csak admin belépést naplózunk (vendég látogatók nem kerülnek a logba)
