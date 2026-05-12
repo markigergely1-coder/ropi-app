@@ -100,17 +100,41 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                                     st.info("Nincs másolható adat a Sheet-ben.")
                             else:
                                 df_fs_sync = get_attendance_rows_fs(fs_db)
-                                if not df_fs_sync.empty:
+                                if df_fs_sync.empty:
+                                    st.warning("Nincs adat a Firestore-ban — a Sheet érintetlen maradt.")
+                                else:
+                                    def _cell(v):
+                                        # None/NaN → üres; datetime-szerű → string; minden más → str
+                                        if v is None:
+                                            return ""
+                                        try:
+                                            if pd.isna(v):
+                                                return ""
+                                        except (TypeError, ValueError):
+                                            pass
+                                        if hasattr(v, "strftime"):
+                                            return v.strftime("%Y-%m-%d %H:%M:%S")
+                                        return str(v)
+
+                                    # 1) ELŐSZÖR felépítjük a sorokat (ha itt hibázik, a Sheet érintetlen marad)
+                                    new_rows = [["Név", "Jön-e", "Regisztráció Időpontja", "Alkalom Dátuma", "Üres", "Mód"]]
+                                    for _, row in df_fs_sync.iterrows():
+                                        new_rows.append([
+                                            _cell(row.get("Név")),
+                                            _cell(row.get("Jön-e")),
+                                            _cell(row.get("Regisztráció Időpontja")),
+                                            _cell(row.get("Alkalom Dátuma")),
+                                            "",
+                                            _cell(row.get("Mód")) or "valós",
+                                        ])
+                                    # 2) Csak ha minden sor felépült, akkor cseréljük a Sheet-et
                                     try:
                                         sheet = gs_client.open(GSHEET_NAME).sheet1
                                         sheet.clear()
-                                        new_rows = [["Név", "Jön-e", "Regisztráció Időpontja", "Alkalom Dátuma", "Üres", "Mód"]]
-                                        for _, row in df_fs_sync.iterrows():
-                                            new_rows.append([row["Név"], row["Jön-e"], row["Regisztráció Időpontja"], row["Alkalom Dátuma"], "", "valós"])
                                         sheet.append_rows(new_rows, value_input_option='USER_ENTERED')
                                         st.success(f"Kész! {len(new_rows)-1} adat átmásolva a Sheet-be.")
                                     except Exception as e:
-                                        st.error(f"Hiba: {e}")
+                                        st.error(f"Hiba a Sheet írásakor: {e}")
                             st.cache_data.clear()
                             st.rerun()
                 with col_m2:
