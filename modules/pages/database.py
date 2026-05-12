@@ -212,7 +212,15 @@ def render_database_page(gs_client, fs_db, logged_in=False):
                     sort_col_fs = st.selectbox("Rendezés alapja:", sortable_cols, index=2, key="db_sort_col")
                 with col_order_fs:
                     ascending_fs = st.checkbox("Növekvő sorrend", value=False, key="db_asc")
-                df_fs = df_fs.sort_values(by=sort_col_fs, ascending=ascending_fs).reset_index(drop=True)
+                try:
+                    df_fs = df_fs.sort_values(by=sort_col_fs, ascending=ascending_fs).reset_index(drop=True)
+                except TypeError:
+                    # Vegyes típusú oszlop (pl. None + datetime a legacy import után) → string-fallback
+                    df_fs = df_fs.sort_values(
+                        by=sort_col_fs,
+                        ascending=ascending_fs,
+                        key=lambda col: col.astype(str),
+                    ).reset_index(drop=True)
                 edit_mode = st.toggle("✏️ Szerkesztés mód bekapcsolása", key="db_edit_toggle")
                 if edit_mode:
                     st.info("💡 Kattints duplán a cellákra a szerkesztéshez! Törléshez jelöld ki a sort és nyomj **Delete**-t.")
